@@ -19,7 +19,7 @@ default = []
 image = { version = "0.25.0", default-features = false }
 imageproc = { version = "0.25.0", default-features = false }
 itertools = "0.14.0" 
-libblur = "0.19.0"
+libblur = "0.20.0"
 thiserror = "2.0.0"
 
 [dev-dependencies]
