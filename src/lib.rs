@@ -10,7 +10,7 @@
 //! - **Boundary Clipping**: Automatic detection and clipping of minimum boundaries
 //! - **Padding**: Smart padding at various positions
 //! - **One-Sided Box Filter**: Edge-preserving smoothing filter for image denoising
-//! - **`INTER_AREA` Resize**: High-quality image downscaling using `OpenCV`'s `INTER_AREA` algorithm
+//! - **`INTER_AREA` Resize**: Image downscaling using `OpenCV`'s `INTER_AREA` algorithm
 //!
 //! ## Example Usage
 //!
@@ -33,7 +33,7 @@
 //! let image: Image<Rgb<u8>> = Image::new(100, 100);
 //! let smoothed = image.one_sided_box_filter(2, 5)?; // radius=2, iterations=5
 //!
-//! // INTER_AREA resize for high-quality downscaling
+//! // INTER_AREA resize for downscaling
 //! let image: Image<Rgb<u8>> = Image::new(100, 100);
 //! let resized = image.resize_area(50, 50)?;
 //!

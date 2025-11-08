@@ -12,14 +12,11 @@
 //! ## Overview
 //!
 //! When compositing objects extracted through alpha matting onto new backgrounds,
-//! estimating foreground colors in transparent regions becomes a critical problem.
-//! Simply using the original image as the foreground causes color bleeding from
-//! the original background.
+//! estimating foreground colors in transparent regions is required to prevent
+//! color bleeding from the original background.
 //!
-//! This Blur-Fusion algorithm was developed as an approximation of Germer et al.'s
-//! multi-level foreground estimation method. Despite being implementable in just
-//! 11 lines of Python code, it achieves results comparable to state-of-the-art
-//! methods with high speed.
+//! This Blur-Fusion algorithm approximates Germer et al.'s multi-level foreground
+//! estimation method using weighted box filtering.
 //!
 //! ## Mathematical Background of the Algorithm
 //!
@@ -63,17 +60,12 @@
 //! F_i = F̂_i + α_i * (I_i - α_i * F̂_i - (1-α_i) * B̂_i)
 //! ```
 //!
-//! ## Algorithm Features
-//!
-//! ### Performance
-//! - **High-speed processing**: Efficient computation through box filter optimization
-//! - **Memory efficiency**: Significantly reduced memory usage compared to Germer et al.'s method
-//! - **Parallel processing**: Acceleration through channel separation for parallelization
-//!
-//! ### Implementation Details
+//! ## Implementation Details
 //! - **Neighborhood radius**: Uses r=91 by default (adjusted from paper's r=90 to satisfy odd requirement)
 //! - **Iterative processing**: Blur-Fusion x2 performs 2 iterations (r=91, r=7)
-//! - **Type safety**: Safety and performance through Rust's type system
+//! - **Type safety**: Type-safe operations through Rust's type system
+//! - **Box filter computation**: Uses integral images for area averaging
+//! - **Channel processing**: Processes RGB channels separately
 //!
 //! ## Usage Examples
 //!
@@ -129,15 +121,14 @@
 //! - Image dimensions are too small for the given radius
 //! - Iteration count is 0 or exceeds 2
 //!
-//! ## Optimization Techniques
+//! ## Implementation Techniques
 //!
-//! This implementation adopts the following optimizations:
+//! This implementation uses:
 //!
-//! 1. **Channel separation**: Uses `imageproc` channel separation functions
-//! 2. **Parallel box filtering**: Processes each color channel independently
-//! 3. **Pre-computation**: Efficiency through pre-computed weight images
-//! 4. **Inline functions**: Inlining of critical path functions
-//! 5. **Type specialization**: Balancing flexibility and performance through generic types
+//! 1. **Channel separation**: Processes each color channel independently using `imageproc` functions
+//! 2. **Pre-computation**: Pre-computes weighted images before box filtering
+//! 3. **Inline functions**: Function inlining for frequently called operations
+//! 4. **Type specialization**: Generic types for different numeric precisions
 //!
 //! ## References
 //!

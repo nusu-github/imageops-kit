@@ -117,21 +117,18 @@ where
     let (x, y) = calculate_position((width, height), pad_size, position)?;
     let (target_width, target_height) = pad_size;
 
-    // Memory-optimized buffer allocation
+    // Allocate buffer with fill color
     let mut out = create_buffer_impl(target_width, target_height, color);
 
-    // High-performance image copying with multiple optimization strategies
+    // Copy source image to destination at specified position
     copy_image_impl(image, &mut out, x, y, width, height);
 
     Ok(out)
 }
 
-/// Internal image copying function using multiple strategies.
+/// Copies source image to destination at specified offset.
 ///
-/// This function applies several optimization techniques:
-/// 1. Row-based bulk copying when memory layout allows
-/// 2. Iterator-based processing with bounds check elision
-/// 3. Cache-friendly access patterns
+/// Uses unsafe pixel access for bounds-checked coordinates.
 #[inline]
 fn copy_image_impl<P>(
     src: &Image<P>,
@@ -146,15 +143,13 @@ fn copy_image_impl<P>(
     let start_x = offset_x as u32;
     let start_y = offset_y as u32;
 
-    // Strategy 1: Try row-wise bulk copy for contiguous memory when possible
-    // This works when both source and destination have same width and
-    // we're copying complete rows
+    // Try row-wise bulk copy for contiguous memory
     if start_x == 0 && width > 64 {
         copy_rows_bulk_impl(src, dst, start_x, start_y, width, height);
         return;
     }
 
-    // Strategy 2: Coordinate-wise iterator processing (cache-friendly)
+    // Pixel-by-pixel copy using iterators
     iproduct!(0..height, 0..width).for_each(|(src_y, src_x)| {
         let dst_x = start_x + src_x;
         let dst_y = start_y + src_y;
@@ -167,7 +162,7 @@ fn copy_image_impl<P>(
     });
 }
 
-/// Bulk copy complete rows for maximum performance.
+/// Copies complete rows when source starts at x=0.
 #[inline]
 fn copy_rows_bulk_impl<P>(
     src: &Image<P>,
@@ -179,8 +174,7 @@ fn copy_rows_bulk_impl<P>(
 ) where
     P: Pixel,
 {
-    // For now, fall back to optimized pixel-by-pixel copy
-    // Future: Implement actual bulk memory copy when ImageBuffer exposes raw access
+    // Pixel-by-pixel copy (ImageBuffer doesn't expose contiguous row access)
     iproduct!(0..height, 0..width).for_each(|(src_y, src_x)| {
         let dst_x = start_x + src_x;
         let dst_y = start_y + src_y;
@@ -192,12 +186,9 @@ fn copy_rows_bulk_impl<P>(
     });
 }
 
-/// Create buffer with pre-allocated capacity.
+/// Creates buffer filled with specified color.
 ///
-/// This function optimizes memory allocation by:
-/// 1. Pre-calculating exact capacity requirements
-/// 2. Using efficient fill patterns
-/// 3. Minimizing allocation overhead
+/// Pre-allocates exact capacity to avoid reallocations.
 #[inline]
 fn create_buffer_impl<P>(width: u32, height: u32, fill_color: P) -> Image<P>
 where
@@ -210,7 +201,7 @@ where
     // Pre-allocate with exact capacity to avoid reallocations
     let mut buffer = Vec::with_capacity(total_subpixels);
 
-    // Fill buffer efficiently using iterator repeat
+    // Fill buffer with color channels
     let fill_channels = fill_color.channels();
     for _ in 0..total_pixels {
         buffer.extend_from_slice(fill_channels);

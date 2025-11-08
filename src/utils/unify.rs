@@ -262,7 +262,7 @@ impl_larger_type!(i16, u32);
 impl_larger_type!(i16, u64);
 impl_larger_type!(i32, u64);
 
-/// Simplified function for the most common use case: unify two RGB images.
+/// Unifies two RGB images with different subpixel types to a common type.
 ///
 /// # Examples
 /// ```no_run
@@ -312,7 +312,7 @@ where
     (unified1, unified2)
 }
 
-/// Simplified function for the most common use case: unify two grayscale images.
+/// Unifies two grayscale images with different subpixel types to a common type.
 ///
 /// # Examples
 /// ```no_run

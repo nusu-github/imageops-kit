@@ -9,8 +9,6 @@ use image::Primitive;
 
 /// Normalizes an alpha value using a pre-computed max value.
 ///
-/// This is more efficient when processing multiple pixels with the same type.
-///
 /// # Arguments
 ///
 /// * `alpha` - The alpha value to normalize

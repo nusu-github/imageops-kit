@@ -20,7 +20,7 @@ where
 /// One-Sided Box Filter (OSBF).
 ///
 /// This filter selects the mean value from 8 adjacent regions (4 quarter windows and 4 half windows)
-/// that is closest to the current pixel value. It's effective for edge-preserving smoothing.
+/// that is closest to the current pixel value, preserving edges during smoothing.
 pub struct OneSidedBoxFilter {
     radius: u32,
 }
@@ -42,7 +42,7 @@ impl OneSidedBoxFilter {
     }
 }
 
-/// Optimized helper function to pad image with edge replication.
+/// Pads image with edge replication.
 fn pad_image_impl<P>(image: &Image<P>, padding: u32) -> Image<P>
 where
     P: Pixel,
@@ -52,7 +52,7 @@ where
     let new_width = width + 2 * padding;
     let new_height = height + 2 * padding;
 
-    // Optimized approach: use from_fn but with reduced condition branches
+    // Use from_fn with clamping for boundary handling
     ImageBuffer::from_fn(new_width, new_height, |x, y| {
         let orig_x = x.saturating_sub(padding).min(width - 1);
         let orig_y = y.saturating_sub(padding).min(height - 1);
@@ -60,7 +60,7 @@ where
     })
 }
 
-/// Optimized box sum calculation function.
+/// Calculates box sum using integral image.
 #[inline]
 fn box_sum_impl(
     integral: &[f32],
@@ -206,7 +206,7 @@ where
     // Reusable pixel data buffer
     let mut pixel_data = Vec::with_capacity(channels);
 
-    // Process image using optimized pixel mapping
+    // Process each pixel using region-based filtering
     let output = ImageBuffer::from_fn(width, height, |x, y| {
         // Coordinates in padded space
         let padded_y = (y + padding as u32) as usize;
