@@ -22,8 +22,7 @@ use crate::{error::ColorConversionError, utils::normalize_alpha_with_max};
 /// - Blue' = Blue × Alpha
 /// - Luminance' = Luminance × Alpha
 ///
-/// This is commonly used in compositing operations and can help reduce
-/// artifacts in image processing pipelines.
+/// This is commonly used in compositing operations.
 ///
 /// Note: This trait performs type conversion (e.g., Rgba -> Rgb). For in-place
 /// premultiplication while keeping the alpha channel, use the `PremultiplyAlphaAndKeepExt` trait.
@@ -126,7 +125,7 @@ where
         let alpha_normalized = normalize_alpha_with_max(alpha, max_value);
         let luminance = f32::from(luminance);
 
-        // Apply premultiplication with proper clamping
+        // Premultiply and clamp to valid range
         let premultiplied = luminance * alpha_normalized;
         let clamped = S::clamp(premultiplied);
 
@@ -150,7 +149,7 @@ where
         let Rgba([red, green, blue, alpha]) = pixel;
         let alpha_normalized = normalize_alpha_with_max(alpha, max_value);
 
-        // Convert to f32 and premultiply with optimized computation
+        // Convert to f32 and premultiply
         compute_premultiplied_rgb_impl([red, green, blue], alpha_normalized)
     }))
 }
@@ -175,7 +174,7 @@ impl PremultiplyAlphaAndDropExt for Image<LumaA<u16>> {
     }
 }
 
-/// Optimized implementation for u8 `LumaA` -> Luma conversion using LUT
+/// Implementation for u8 `LumaA` -> Luma conversion using LUT
 impl PremultiplyAlphaAndDropExt for Image<LumaA<u8>> {
     type Output = Image<Luma<u8>>;
 
@@ -195,7 +194,7 @@ impl PremultiplyAlphaAndDropExt for Image<Rgba<f32>> {
     }
 }
 
-/// Optimized implementation for u8 Rgba -> Rgb conversion using LUT
+/// Implementation for u8 Rgba -> Rgb conversion using LUT
 impl PremultiplyAlphaAndDropExt for Image<Rgba<u8>> {
     type Output = Image<Rgb<u8>>;
 
@@ -206,7 +205,7 @@ impl PremultiplyAlphaAndDropExt for Image<Rgba<u8>> {
     }
 }
 
-/// Optimized implementation for u16 Rgba -> Rgb conversion using integer arithmetic
+/// Implementation for u16 Rgba -> Rgb conversion using integer arithmetic
 impl PremultiplyAlphaAndDropExt for Image<Rgba<u16>> {
     type Output = Image<Rgb<u16>>;
 
@@ -221,7 +220,7 @@ impl PremultiplyAlphaAndDropExt for Image<Rgba<u16>> {
     }
 }
 
-/// Optimized implementation for u32 Rgba -> Rgb conversion using integer arithmetic
+/// Implementation for u32 Rgba -> Rgb conversion using 64-bit integer arithmetic
 impl PremultiplyAlphaAndDropExt for Image<Rgba<u32>> {
     type Output = Image<Rgb<u32>>;
 
@@ -248,7 +247,7 @@ impl PremultiplyAlphaAndKeepExt for Image<LumaA<f32>> {
             let alpha_normalized = normalize_alpha_with_max(alpha, max_value);
             let luminance: f32 = luminance;
 
-            // Apply premultiplication with proper clamping
+            // Premultiply and clamp to valid range
             let premultiplied: f32 = luminance * alpha_normalized;
             let clamped = premultiplied.clamp(0.0, f32::DEFAULT_MAX_VALUE);
 
@@ -272,7 +271,7 @@ impl PremultiplyAlphaAndKeepExt for Image<LumaA<f32>> {
     }
 }
 
-/// Optimized implementation for u8 `LumaA` images using LUT
+/// Implementation for u8 `LumaA` images using LUT
 impl PremultiplyAlphaAndKeepExt for Image<LumaA<u8>> {
     fn premultiply_alpha_and_keep(self) -> Result<Self, ColorConversionError> {
         map_pixels_to_new_image(&self, |&LumaA([luminance, alpha])| {
@@ -330,7 +329,7 @@ impl PremultiplyAlphaAndKeepExt for Image<Rgba<f32>> {
     }
 }
 
-/// Optimized implementation for u8 Rgba images using LUT
+/// Implementation for u8 Rgba images using LUT
 impl PremultiplyAlphaAndKeepExt for Image<Rgba<u8>> {
     fn premultiply_alpha_and_keep(self) -> Result<Self, ColorConversionError> {
         map_pixels_to_new_image(&self, |&Rgba([red, green, blue, alpha])| {
@@ -352,15 +351,19 @@ impl PremultiplyAlphaAndKeepExt for Image<Rgba<u8>> {
     }
 }
 
-/// Compile-time Look-Up Table generator for u8 alpha premultiplication
+/// Compile-time Look-Up Table generator for u8 alpha premultiplication.
+///
+/// Uses integer approximation of division: ((x * a + 2^(N-1)) * (2^N + 1)) >> (2N)
+/// For N=8: ((x * a + 128) * 257) >> 16 approximates (x * a) / 255
 const fn generate_alpha_lut() -> [[u8; 256]; 256] {
     let mut lut = [[0u8; 256]; 256];
     let mut alpha = 0;
     while alpha < 256 {
         let mut color = 0;
         while color < 256 {
-            // (color * alpha) / 255 with proper rounding
-            lut[alpha][color] = ((color * alpha + 127) / 255) as u8;
+            // Integer approximation: ((n + 128) * 257) >> 16 approximates n / 255
+            let n = color * alpha;
+            lut[alpha][color] = (((n + 128) * 257) >> 16) as u8;
             color += 1;
         }
         alpha += 1;
@@ -371,13 +374,13 @@ const fn generate_alpha_lut() -> [[u8; 256]; 256] {
 /// Compile-time generated Look-Up Table for u8 alpha premultiplication
 static ALPHA_LUT: [[u8; 256]; 256] = generate_alpha_lut();
 
-/// Fast u8 alpha premultiplication using compile-time LUT
+/// u8 alpha premultiplication using compile-time LUT
 #[inline]
 const fn premultiply_u8(color: u8, alpha: u8) -> u8 {
     ALPHA_LUT[alpha as usize][color as usize]
 }
 
-/// Fast u8 RGB premultiplication using compile-time LUT
+/// u8 RGB premultiplication using compile-time LUT
 #[inline]
 const fn premultiply_rgb_u8(channels: [u8; 3], alpha: u8) -> [u8; 3] {
     [
@@ -387,14 +390,14 @@ const fn premultiply_rgb_u8(channels: [u8; 3], alpha: u8) -> [u8; 3] {
     ]
 }
 
-/// Computes premultiplied RGB pixel with proper clamping
+/// Computes premultiplied RGB pixel and clamps to valid range
 #[inline]
 fn compute_premultiplied_rgb_impl<S>(channels: [S; 3], alpha_normalized: f32) -> Rgb<S>
 where
     S: Clamp<f32> + Primitive,
     f32: From<S>,
 {
-    // Direct array construction to avoid intermediate allocations
+    // Construct array directly
     let [r, g, b] = channels;
     let r = f32::from(r) * alpha_normalized;
     let g = f32::from(g) * alpha_normalized;
@@ -403,16 +406,21 @@ where
     Rgb([S::clamp(r), S::clamp(g), S::clamp(b)])
 }
 
-/// Optimized integer premultiplication for u16 type using fixed-point arithmetic
+/// Integer premultiplication for u16 type.
+///
+/// Uses integer approximation of division: ((x * a + 2^(N-1)) * (2^N + 1)) >> (2N)
+/// For N=16: ((x * a + 32768) * 65537) >> 32 approximates (x * a) / 65535
 #[inline]
 const fn premultiply_u16(color: u16, alpha: u16) -> u16 {
-    // Use fixed-point arithmetic to avoid floating point operations
-    // (color * alpha) / 65535 with proper rounding
-    let result = (color as u32 * alpha as u32 + 32767) / 65535;
+    let n = color as u32 * alpha as u32;
+    let result = ((n + 32768) as u64 * 65537) >> 32;
     result as u16
 }
 
-/// Optimized integer premultiplication for u32 type using fixed-point arithmetic
+/// Integer premultiplication for u32 type using 64-bit division.
+///
+/// Uses 64-bit division instead of integer approximation formula.
+/// The approximation formula would require u128 arithmetic.
 #[inline]
 const fn premultiply_u32(color: u32, alpha: u32) -> u32 {
     // Use 64-bit arithmetic to avoid overflow
