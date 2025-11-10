@@ -149,6 +149,35 @@ use crate::{error::AlphaMaskError, utils::validate_matching_dimensions};
 
 type SmoothingResult<T> = Result<(Image<Rgb<T>>, Image<Rgb<T>>), AlphaMaskError>;
 
+/// Standard radius for first iteration in Blur-Fusion x2 (adjusted from paper's 90 to satisfy odd requirement)
+const BLUR_FUSION_X2_RADIUS_1: u32 = 91;
+
+/// Standard radius for second iteration in Blur-Fusion x2 (adjusted from paper's 6 to satisfy odd requirement)
+const BLUR_FUSION_X2_RADIUS_2: u32 = 7;
+
+/// Workspace for reusing image buffers across Blur-Fusion iterations.
+///
+/// This struct holds pre-allocated buffers to reduce memory allocations
+/// when performing multiple iterations (e.g., Blur-Fusion x2).
+struct BlurFusionWorkspace {
+    fg_weighted: Image<Rgb<f32>>,
+    bg_weighted: Image<Rgb<f32>>,
+    alpha_weighted: Image<Luma<f32>>,
+    beta_weighted: Image<Luma<f32>>,
+}
+
+impl BlurFusionWorkspace {
+    /// Creates a new workspace with buffers sized for the given dimensions.
+    fn new(width: u32, height: u32) -> Self {
+        Self {
+            fg_weighted: ImageBuffer::new(width, height),
+            bg_weighted: ImageBuffer::new(width, height),
+            alpha_weighted: ImageBuffer::new(width, height),
+            beta_weighted: ImageBuffer::new(width, height),
+        }
+    }
+}
+
 /// Trait for performing Blur-Fusion foreground estimation on RGB images.
 ///
 /// This trait provides convenient method chaining for foreground estimation
@@ -265,7 +294,7 @@ where
     // Use standard radii for iterations
     let radii = match iterations {
         1 => vec![radius],
-        2 => vec![91, 7], // Standard Blur-Fusion x2 radii (adjusted to odd numbers)
+        2 => vec![BLUR_FUSION_X2_RADIUS_1, BLUR_FUSION_X2_RADIUS_2], // Standard Blur-Fusion x2 radii
         _ => {
             return Err(AlphaMaskError::InvalidParameter(
                 "iterations must be 1 or 2".to_owned(),
@@ -273,8 +302,12 @@ where
         }
     };
 
+    // Create workspace once to reuse buffers across iterations
+    let (width, height) = image.dimensions();
+    let mut workspace = BlurFusionWorkspace::new(width, height);
+
     for r in radii {
-        apply_blur_fusion_step_impl(image, alpha, &mut foreground, background, r)?;
+        apply_blur_fusion_step_impl(image, alpha, &mut foreground, background, r, &mut workspace)?;
     }
 
     Ok(foreground)
@@ -291,6 +324,7 @@ fn apply_blur_fusion_step_impl<T>(
     foreground: &mut Image<Rgb<T>>,
     background: &Image<Rgb<T>>,
     radius: u32,
+    workspace: &mut BlurFusionWorkspace,
 ) -> Result<(), AlphaMaskError>
 where
     Rgb<T>: Pixel<Subpixel = T>,
@@ -298,7 +332,8 @@ where
     f32: From<T>,
 {
     // Phase 1: Compute weighted blurred estimates using optimized approach
-    let (f_hat, b_hat) = compute_smoothed_estimates_impl(foreground, background, alpha, radius)?;
+    let (f_hat, b_hat) =
+        compute_smoothed_estimates_impl(foreground, background, alpha, radius, workspace)?;
 
     // Phase 2: Apply final foreground estimation (Equation 7) using iterators
     let max_val = f32::from(T::DEFAULT_MAX_VALUE);
@@ -339,11 +374,13 @@ where
 /// - B̂_i = Σ(B_j * (1-α_j)) / Σ(1-α_j)
 ///
 /// Acceleration is achieved through direct f32 calculations and optimized channel processing.
+/// The workspace parameter provides pre-allocated buffers to reduce memory allocations.
 fn compute_smoothed_estimates_impl<T>(
     foreground: &Image<Rgb<T>>,
     background: &Image<Rgb<T>>,
     alpha: &Image<Luma<T>>,
     radius: u32,
+    workspace: &mut BlurFusionWorkspace,
 ) -> SmoothingResult<T>
 where
     Rgb<T>: Pixel<Subpixel = T>,
@@ -352,10 +389,11 @@ where
 {
     let (width, height) = foreground.dimensions();
 
-    let mut fg_weighted: Image<Rgb<f32>> = ImageBuffer::new(width, height);
-    let mut bg_weighted: Image<Rgb<f32>> = ImageBuffer::new(width, height);
-    let mut alpha_weighted: Image<Luma<f32>> = ImageBuffer::new(width, height);
-    let mut beta_weighted: Image<Luma<f32>> = ImageBuffer::new(width, height);
+    // Reuse workspace buffers instead of allocating new ones
+    let fg_weighted = &mut workspace.fg_weighted;
+    let bg_weighted = &mut workspace.bg_weighted;
+    let alpha_weighted = &mut workspace.alpha_weighted;
+    let beta_weighted = &mut workspace.beta_weighted;
 
     // Pre-compute weighted images using iterators for improved safety and readability
     let max_val = f32::from(T::DEFAULT_MAX_VALUE);
@@ -386,35 +424,67 @@ where
         },
     );
 
-    // Apply box filter to all weighted images using integral image implementation
+    // Pre-allocate output buffers for blur operations to enable zero-copy borrow pattern
+    let rgb_pixel_count = (width * height * 3) as usize;
+    let luma_pixel_count = (width * height) as usize;
+
+    let mut fg_blur_buffer: Vec<f32> = vec![0.0; rgb_pixel_count];
+    let mut bg_blur_buffer: Vec<f32> = vec![0.0; rgb_pixel_count];
+    let mut alpha_blur_buffer: Vec<f32> = vec![0.0; luma_pixel_count];
+    let mut beta_blur_buffer: Vec<f32> = vec![0.0; luma_pixel_count];
+
+    // Apply box filter to all weighted images using zero-copy borrow pattern
     let converted_fg_weighted = BlurImage::borrow(
         fg_weighted.as_raw(),
         fg_weighted.width(),
         fg_weighted.height(),
         FastBlurChannels::Channels3,
     );
-    let mut blurred_fg_weighted = BlurImageMut::default();
+    let mut blurred_fg_weighted = BlurImageMut::borrow(
+        &mut fg_blur_buffer,
+        width,
+        height,
+        FastBlurChannels::Channels3,
+    );
+
     let converted_bg_weighted = BlurImage::borrow(
         bg_weighted.as_raw(),
         bg_weighted.width(),
         bg_weighted.height(),
         FastBlurChannels::Channels3,
     );
-    let mut blurred_bg_weighted = BlurImageMut::default();
+    let mut blurred_bg_weighted = BlurImageMut::borrow(
+        &mut bg_blur_buffer,
+        width,
+        height,
+        FastBlurChannels::Channels3,
+    );
+
     let converted_alpha_weighted = BlurImage::borrow(
         alpha_weighted.as_raw(),
         alpha_weighted.width(),
         alpha_weighted.height(),
         FastBlurChannels::Plane,
     );
-    let mut blurred_alpha_weighted = BlurImageMut::default();
+    let mut blurred_alpha_weighted = BlurImageMut::borrow(
+        &mut alpha_blur_buffer,
+        width,
+        height,
+        FastBlurChannels::Plane,
+    );
+
     let converted_beta_weighted = BlurImage::borrow(
         beta_weighted.as_raw(),
         beta_weighted.width(),
         beta_weighted.height(),
         FastBlurChannels::Plane,
     );
-    let mut blurred_beta_weighted = BlurImageMut::default();
+    let mut blurred_beta_weighted = BlurImageMut::borrow(
+        &mut beta_blur_buffer,
+        width,
+        height,
+        FastBlurChannels::Plane,
+    );
 
     let box_params = BoxBlurParameters::new(radius);
 
@@ -448,39 +518,27 @@ where
     )
     .map_err(|e| AlphaMaskError::BlurFusionError(e.to_string()))?;
 
-    // Convert blurred images back to original types
-    let fg_blurred: Image<Rgb<f32>> = ImageBuffer::from_raw(
-        blurred_fg_weighted.width,
-        blurred_fg_weighted.height,
-        blurred_fg_weighted.data.borrow().as_ref().to_vec(),
-    )
-    .ok_or_else(|| {
-        AlphaMaskError::BlurFusionError("Failed to create blurred foreground image".to_owned())
-    })?;
-    let bg_blurred: Image<Rgb<f32>> = ImageBuffer::from_raw(
-        blurred_bg_weighted.width,
-        blurred_bg_weighted.height,
-        blurred_bg_weighted.data.borrow().as_ref().to_vec(),
-    )
-    .ok_or_else(|| {
-        AlphaMaskError::BlurFusionError("Failed to create blurred background image".to_owned())
-    })?;
-    let alpha_weights_blurred: Image<Luma<f32>> = ImageBuffer::from_raw(
-        blurred_alpha_weighted.width,
-        blurred_alpha_weighted.height,
-        blurred_alpha_weighted.data.borrow().as_ref().to_vec(),
-    )
-    .ok_or_else(|| {
-        AlphaMaskError::BlurFusionError("Failed to create blurred alpha weights image".to_owned())
-    })?;
-    let beta_weights_blurred: Image<Luma<f32>> = ImageBuffer::from_raw(
-        blurred_beta_weighted.width,
-        blurred_beta_weighted.height,
-        blurred_beta_weighted.data.borrow().as_ref().to_vec(),
-    )
-    .ok_or_else(|| {
-        AlphaMaskError::BlurFusionError("Failed to create blurred beta weights image".to_owned())
-    })?;
+    // Convert blurred images back to original types using zero-copy (buffers already contain results)
+    let fg_blurred: Image<Rgb<f32>> = ImageBuffer::from_raw(width, height, fg_blur_buffer)
+        .ok_or_else(|| {
+            AlphaMaskError::BlurFusionError("Failed to create blurred foreground image".to_owned())
+        })?;
+    let bg_blurred: Image<Rgb<f32>> = ImageBuffer::from_raw(width, height, bg_blur_buffer)
+        .ok_or_else(|| {
+            AlphaMaskError::BlurFusionError("Failed to create blurred background image".to_owned())
+        })?;
+    let alpha_weights_blurred: Image<Luma<f32>> =
+        ImageBuffer::from_raw(width, height, alpha_blur_buffer).ok_or_else(|| {
+            AlphaMaskError::BlurFusionError(
+                "Failed to create blurred alpha weights image".to_owned(),
+            )
+        })?;
+    let beta_weights_blurred: Image<Luma<f32>> =
+        ImageBuffer::from_raw(width, height, beta_blur_buffer).ok_or_else(|| {
+            AlphaMaskError::BlurFusionError(
+                "Failed to create blurred beta weights image".to_owned(),
+            )
+        })?;
 
     // Reconstruct final averaged images using iterators
     let mut f_hat: Image<Rgb<T>> = ImageBuffer::new(width, height);
