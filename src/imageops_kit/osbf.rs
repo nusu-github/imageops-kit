@@ -76,6 +76,60 @@ fn box_sum_impl(
         + integral[y1 * integral_width + x1]
 }
 
+/// Pre-computed region offsets relative to the center pixel for One-Sided Box Filter.
+#[derive(Debug, Clone, Copy)]
+struct RegionOffsets {
+    /// Quarter window offsets: (dy1, dx1, dy2, dx2) relative to center
+    quarters: [(isize, isize, isize, isize); 4],
+    /// Half window offsets: (dy1, dx1, dy2, dx2) relative to center
+    halves: [(isize, isize, isize, isize); 4],
+}
+
+impl RegionOffsets {
+    const fn new(radius: isize) -> Self {
+        Self {
+            quarters: [
+                (0, -radius, radius + 1, 1),          // q1: bottom-left quarter
+                (0, 0, radius + 1, radius + 1),       // q2: bottom-right quarter
+                (-radius, 0, 1, radius + 1),          // q3: top-right quarter
+                (-radius, -radius, 1, 1),             // q4: top-left quarter
+            ],
+            halves: [
+                (-radius, -radius, radius + 1, 1),    // h1: left half
+                (-radius, 0, radius + 1, radius + 1), // h2: right half
+                (0, -radius, radius + 1, radius + 1), // h3: bottom half
+                (-radius, -radius, 1, radius + 1),    // h4: top half
+            ],
+        }
+    }
+
+    #[inline]
+    fn apply(&self, base_y: usize, base_x: usize) -> OneSidedBoxFilterRegions {
+        let mut quarters = [(0, 0, 0, 0); 4];
+        let mut halves = [(0, 0, 0, 0); 4];
+
+        for (i, &(dy1, dx1, dy2, dx2)) in self.quarters.iter().enumerate() {
+            quarters[i] = (
+                base_y.saturating_add_signed(dy1),
+                base_x.saturating_add_signed(dx1),
+                base_y.saturating_add_signed(dy2),
+                base_x.saturating_add_signed(dx2),
+            );
+        }
+
+        for (i, &(dy1, dx1, dy2, dx2)) in self.halves.iter().enumerate() {
+            halves[i] = (
+                base_y.saturating_add_signed(dy1),
+                base_x.saturating_add_signed(dx1),
+                base_y.saturating_add_signed(dy2),
+                base_x.saturating_add_signed(dx2),
+            );
+        }
+
+        OneSidedBoxFilterRegions { quarters, halves }
+    }
+}
+
 /// Pre-computed region coordinates for One-Sided Box Filter.
 #[derive(Debug, Clone)]
 struct OneSidedBoxFilterRegions {
@@ -83,79 +137,6 @@ struct OneSidedBoxFilterRegions {
     quarters: [(usize, usize, usize, usize); 4],
     /// Half window coordinates: (y1, x1, y2, x2)
     halves: [(usize, usize, usize, usize); 4],
-    quarter_area: f32,
-    half_area: f32,
-}
-
-impl OneSidedBoxFilterRegions {
-    const fn new(padded_y: usize, padded_x: usize, radius: usize) -> Self {
-        let padded_y_sub_radius = padded_y.saturating_sub(radius);
-        let padded_x_sub_radius = padded_x.saturating_sub(radius);
-
-        let quarters = [
-            (
-                padded_y,
-                padded_x_sub_radius,
-                padded_y + radius + 1,
-                padded_x + 1,
-            ), // q1
-            (
-                padded_y,
-                padded_x,
-                padded_y + radius + 1,
-                padded_x + radius + 1,
-            ), // q2
-            (
-                padded_y_sub_radius,
-                padded_x,
-                padded_y + 1,
-                padded_x + radius + 1,
-            ), // q3
-            (
-                padded_y_sub_radius,
-                padded_x_sub_radius,
-                padded_y + 1,
-                padded_x + 1,
-            ), // q4
-        ];
-
-        let halves = [
-            (
-                padded_y_sub_radius,
-                padded_x_sub_radius,
-                padded_y + radius + 1,
-                padded_x + 1,
-            ), // h1
-            (
-                padded_y_sub_radius,
-                padded_x,
-                padded_y + radius + 1,
-                padded_x + radius + 1,
-            ), // h2
-            (
-                padded_y,
-                padded_x_sub_radius,
-                padded_y + radius + 1,
-                padded_x + radius + 1,
-            ), // h3
-            (
-                padded_y_sub_radius,
-                padded_x_sub_radius,
-                padded_y + 1,
-                padded_x + radius + 1,
-            ), // h4
-        ];
-
-        let quarter_area = ((radius + 1) * (radius + 1)) as f32;
-        let half_area = ((radius + 1) * (2 * radius + 1)) as f32;
-
-        Self {
-            quarters,
-            halves,
-            quarter_area,
-            half_area,
-        }
-    }
 }
 
 /// Perform one One-Sided Box Filter iteration on the entire image.
@@ -201,7 +182,14 @@ where
 
     let radius_usize = radius as usize;
 
-    let mut pixel_data = Vec::with_capacity(channels);
+    // Compute area reciprocals once before the pixel loop
+    let quarter_area = ((radius_usize + 1) * (radius_usize + 1)) as f32;
+    let half_area = ((radius_usize + 1) * (2 * radius_usize + 1)) as f32;
+    let quarter_area_recip = 1.0 / quarter_area;
+    let half_area_recip = 1.0 / half_area;
+
+    // Precompute region structure (offsets are constant for all pixels)
+    let region_offsets = RegionOffsets::new(radius_usize as isize);
 
     let output = ImageBuffer::from_fn(width, height, |x, y| {
         let padded_y = (y + padding as u32) as usize;
@@ -210,20 +198,24 @@ where
         let current_pixel = image.get_pixel(x, y);
         let current_channels = current_pixel.channels();
 
-        let regions = OneSidedBoxFilterRegions::new(padded_y, padded_x, radius_usize);
+        // Apply offsets to get absolute coordinates for this pixel
+        let regions = region_offsets.apply(padded_y, padded_x);
 
-        pixel_data.clear();
+        // Use stack-allocated array for pixel data (supports up to 4 channels: RGBA)
+        let mut pixel_data = [P::Subpixel::DEFAULT_MIN_VALUE; 4];
 
-        for channel_idx in 0..channels {
+        for (channel_idx, integral_base) in channel_integrals
+            .chunks_exact(integral_size)
+            .take(channels)
+            .enumerate()
+        {
             let current_value = f32::from(current_channels[channel_idx]);
             let mut min_diff = f32::INFINITY;
             let mut best_value = current_value;
 
-            let integral_base = &channel_integrals[channel_idx * integral_size..];
-
             for &(y1, x1, y2, x2) in &regions.quarters {
                 let value = box_sum_impl(integral_base, integral_width, y1, x1, y2, x2)
-                    / regions.quarter_area;
+                    * quarter_area_recip;
                 let diff = (value - current_value).abs();
                 if diff < min_diff {
                     min_diff = diff;
@@ -233,7 +225,7 @@ where
 
             for &(y1, x1, y2, x2) in &regions.halves {
                 let value =
-                    box_sum_impl(integral_base, integral_width, y1, x1, y2, x2) / regions.half_area;
+                    box_sum_impl(integral_base, integral_width, y1, x1, y2, x2) * half_area_recip;
                 let diff = (value - current_value).abs();
                 if diff < min_diff {
                     min_diff = diff;
@@ -241,10 +233,10 @@ where
                 }
             }
 
-            pixel_data.push(P::Subpixel::clamp(best_value));
+            pixel_data[channel_idx] = P::Subpixel::clamp(best_value);
         }
 
-        *P::from_slice(&pixel_data)
+        *P::from_slice(&pixel_data[..channels])
     });
 
     Ok(output)
