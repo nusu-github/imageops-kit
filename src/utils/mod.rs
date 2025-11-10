@@ -17,7 +17,12 @@ use image::Primitive;
 /// # Returns
 ///
 /// The normalized alpha value as a floating-point number between 0 and 1
-#[inline]
+///
+/// # Performance
+///
+/// This function is force-inlined as a hot-path optimization to enable
+/// LLVM to perform common subexpression elimination across call sites.
+#[inline(always)]
 pub fn normalize_alpha_with_max<S>(alpha: S, max_value: f32) -> f32
 where
     S: Into<f32> + Primitive,

@@ -89,10 +89,10 @@ impl RegionOffsets {
     const fn new(radius: isize) -> Self {
         Self {
             quarters: [
-                (0, -radius, radius + 1, 1),          // q1: bottom-left quarter
-                (0, 0, radius + 1, radius + 1),       // q2: bottom-right quarter
-                (-radius, 0, 1, radius + 1),          // q3: top-right quarter
-                (-radius, -radius, 1, 1),             // q4: top-left quarter
+                (0, -radius, radius + 1, 1),    // q1: bottom-left quarter
+                (0, 0, radius + 1, radius + 1), // q2: bottom-right quarter
+                (-radius, 0, 1, radius + 1),    // q3: top-right quarter
+                (-radius, -radius, 1, 1),       // q4: top-left quarter
             ],
             halves: [
                 (-radius, -radius, radius + 1, 1),    // h1: left half

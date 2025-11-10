@@ -109,6 +109,7 @@ pub trait PremultiplyAlphaAndKeepExt {
 }
 
 /// Generic fallback implementation for `LumaA` -> Luma conversion with alpha premultiplication
+#[inline]
 fn premultiply_lumaa_impl<S>(
     image: &Image<LumaA<S>>,
 ) -> Result<Image<Luma<S>>, ColorConversionError>
@@ -133,6 +134,7 @@ where
 }
 
 /// Generic fallback implementation for Rgba -> Rgb conversion with alpha premultiplication
+#[inline]
 fn premultiply_rgba_impl<S>(image: &Image<Rgba<S>>) -> Result<Image<Rgb<S>>, ColorConversionError>
 where
     Rgba<S>: Pixel<Subpixel = S>,
@@ -238,16 +240,17 @@ impl PremultiplyAlphaAndKeepExt for Image<LumaA<f32>> {
     fn premultiply_alpha_and_keep(self) -> Result<Self, ColorConversionError> {
         validate_image_dimensions(&self)?;
 
-        let max_value = f32::DEFAULT_MAX_VALUE;
+        // Loop invariant hoisted to compile-time constant
+        const MAX_VALUE: f32 = 1.0;
 
         Ok(map_colors(&self, |pixel| {
             let LumaA([luminance, alpha]) = pixel;
-            let alpha_normalized = normalize_alpha_with_max(alpha, max_value);
+            let alpha_normalized = normalize_alpha_with_max(alpha, MAX_VALUE);
             let luminance: f32 = luminance;
 
             // Premultiply and clamp to valid range
             let premultiplied: f32 = luminance * alpha_normalized;
-            let clamped = premultiplied.clamp(0.0, f32::DEFAULT_MAX_VALUE);
+            let clamped = premultiplied.clamp(0.0, MAX_VALUE);
 
             LumaA([clamped, alpha])
         }))
@@ -256,12 +259,13 @@ impl PremultiplyAlphaAndKeepExt for Image<LumaA<f32>> {
     fn premultiply_alpha_and_keep_mut(&mut self) -> Result<&mut Self, ColorConversionError> {
         validate_image_dimensions(self)?;
 
-        let max_value = f32::DEFAULT_MAX_VALUE;
+        // Loop invariant hoisted to compile-time constant
+        const MAX_VALUE: f32 = 1.0;
 
         self.pixels_mut().for_each(|pixel| {
             let LumaA([luminance, alpha]) = *pixel;
-            let alpha_normalized = normalize_alpha_with_max(alpha, max_value);
-            let premultiplied = (luminance * alpha_normalized).clamp(0.0, max_value);
+            let alpha_normalized = normalize_alpha_with_max(alpha, MAX_VALUE);
+            let premultiplied = (luminance * alpha_normalized).clamp(0.0, MAX_VALUE);
             *pixel = LumaA([premultiplied, alpha]);
         });
 
@@ -294,11 +298,12 @@ impl PremultiplyAlphaAndKeepExt for Image<Rgba<f32>> {
     fn premultiply_alpha_and_keep(self) -> Result<Self, ColorConversionError> {
         validate_image_dimensions(&self)?;
 
-        let max_value = f32::DEFAULT_MAX_VALUE;
+        // Loop invariant hoisted to compile-time constant
+        const MAX_VALUE: f32 = 1.0;
 
         Ok(map_colors(&self, |pixel| {
             let Rgba([red, green, blue, alpha]) = pixel;
-            let alpha_normalized = normalize_alpha_with_max(alpha, max_value);
+            let alpha_normalized = normalize_alpha_with_max(alpha, MAX_VALUE);
 
             // Premultiply each channel
             let premultiplied =
@@ -312,11 +317,12 @@ impl PremultiplyAlphaAndKeepExt for Image<Rgba<f32>> {
     fn premultiply_alpha_and_keep_mut(&mut self) -> Result<&mut Self, ColorConversionError> {
         validate_image_dimensions(self)?;
 
-        let max_value = f32::DEFAULT_MAX_VALUE;
+        // Loop invariant hoisted to compile-time constant
+        const MAX_VALUE: f32 = 1.0;
 
         self.pixels_mut().for_each(|pixel| {
             let Rgba([red, green, blue, alpha]) = *pixel;
-            let alpha_normalized = normalize_alpha_with_max(alpha, max_value);
+            let alpha_normalized = normalize_alpha_with_max(alpha, MAX_VALUE);
 
             let Rgb([r_pre, g_pre, b_pre]) =
                 compute_premultiplied_rgb_impl([red, green, blue], alpha_normalized);
@@ -416,34 +422,24 @@ const fn premultiply_u16(color: u16, alpha: u16) -> u16 {
 
 /// Integer premultiplication for u32 type using 64-bit division.
 ///
-/// Uses 64-bit division instead of integer approximation formula.
-/// The approximation formula would require u128 arithmetic.
+/// Uses division instead of integer approximation for accuracy.
+/// Integer approximation formulas for u32 either require u128 arithmetic
+/// or sacrifice precision. Since u32 images are less common and accuracy
+/// is paramount for image processing, we use division here.
 #[inline]
 const fn premultiply_u32(color: u32, alpha: u32) -> u32 {
-    // Use 64-bit arithmetic to avoid overflow
-    let result = (color as u64 * alpha as u64 + (u32::MAX as u64 / 2)) / u32::MAX as u64;
-    result as u32
+    let product = color as u64 * alpha as u64;
+    // Use division with rounding for maximum accuracy
+    let rounded = product + (u32::MAX as u64 >> 1);
+    (rounded / u32::MAX as u64) as u32
 }
 
-/// Processes pixels from source to destination using a mapping function
-fn process_pixels_with_mapping<SP, DP, F>(
-    src_image: &Image<SP>,
-    dst_image: &mut Image<DP>,
-    mapper: F,
-) where
-    SP: Pixel,
-    DP: Pixel,
-    F: Fn(&SP) -> DP,
-{
-    src_image
-        .pixels()
-        .zip_eq(dst_image.pixels_mut())
-        .for_each(|(src_pixel, dst_pixel)| {
-            *dst_pixel = mapper(src_pixel);
-        });
-}
-
-/// Creates a new image by processing each pixel with a mapping function
+/// Creates a new image by processing each pixel with a mapping function.
+///
+/// This function applies function fusion by inlining the pixel iteration,
+/// allowing LLVM to better optimize the complete pipeline. The sequential
+/// iteration provides cache-friendly memory access patterns.
+#[inline]
 fn map_pixels_to_new_image<SP, DP, F>(
     src_image: &Image<SP>,
     mapper: F,
@@ -458,12 +454,19 @@ where
     let (width, height) = src_image.dimensions();
     let mut out = ImageBuffer::new(width, height);
 
-    process_pixels_with_mapping(src_image, &mut out, mapper);
+    // Function fusion: inline the iteration for better optimization
+    src_image
+        .pixels()
+        .zip_eq(out.pixels_mut())
+        .for_each(|(src_pixel, dst_pixel)| {
+            *dst_pixel = mapper(src_pixel);
+        });
 
     Ok(out)
 }
 
 /// Validates image dimensions for processing
+#[inline]
 fn validate_image_dimensions<I>(image: &I) -> Result<(), ColorConversionError>
 where
     I: GenericImageView,
