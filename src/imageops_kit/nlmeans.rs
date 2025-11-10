@@ -108,12 +108,10 @@ fn validate_parameters_impl(
 ) -> Result<(), NLMeansError> {
     use crate::utils::validate_non_empty_image;
 
-    // Check if h is positive
     if h <= 0.0 {
         return Err(NLMeansError::InvalidFilteringParameter { h });
     }
 
-    // Check if window sizes are odd and positive
     if patch_size == 0 || patch_size % 2 == 0 {
         return Err(NLMeansError::InvalidWindowSize { size: patch_size });
     }
@@ -124,7 +122,6 @@ fn validate_parameters_impl(
         });
     }
 
-    // Check if search_window > patch_size
     if search_window <= patch_size {
         return Err(NLMeansError::InvalidWindowSizes {
             small_window: patch_size,
@@ -132,7 +129,6 @@ fn validate_parameters_impl(
         });
     }
 
-    // Use utils function to validate image is not empty
     validate_non_empty_image(width, height, "NL-Means").map_err(|_| {
         NLMeansError::ImageTooSmall {
             width,
@@ -141,7 +137,6 @@ fn validate_parameters_impl(
         }
     })?;
 
-    // Check if image is large enough for the window sizes
     if width <= search_window || height <= search_window {
         return Err(NLMeansError::ImageTooSmall {
             width,
@@ -511,10 +506,8 @@ where
         let pad_size = search_window / 2;
         let (buffered_image, buffer_width, buffer_height) = add_padding_impl(&self, pad_size);
 
-        // Pre-compute normalization factor
         let normalization_factor = h * h * (patch_size * patch_size) as f32;
 
-        // Initialize result image
         let mut result = ImageBuffer::new(width, height);
 
         // Process each pixel
@@ -615,10 +608,8 @@ where
         let pad_size = search_window / 2;
         let (buffered_image, buffer_width, buffer_height) = add_padding_rgb_impl(&self, pad_size);
 
-        // Pre-compute normalization factor
-        let normalization_factor = h * h * (patch_size * patch_size * 3) as f32; // 3 channels
+        let normalization_factor = h * h * (patch_size * patch_size * 3) as f32;
 
-        // Initialize result image
         let mut result = ImageBuffer::new(width, height);
 
         // Process each pixel
@@ -734,10 +725,8 @@ where
         let pad_size = search_window / 2;
         let (buffered_image, buffer_width, buffer_height) = add_padding_rgba_impl(&self, pad_size);
 
-        // Pre-compute normalization factor
-        let normalization_factor = h * h * (patch_size * patch_size * 4) as f32; // 4 channels
+        let normalization_factor = h * h * (patch_size * patch_size * 4) as f32;
 
-        // Initialize result image
         let mut result = ImageBuffer::new(width, height);
 
         // Process each pixel

@@ -66,7 +66,7 @@ pub fn validate_matching_dimensions(
 ) -> Result<(), String> {
     if width1 != width2 || height1 != height2 {
         Err(format!(
-            "_action_expected{context}: Image dimensions must match. Got {width1}x{height1} and {width2}x{height2}"
+            "{context}: Image dimensions must match. Got {width1}x{height1} and {width2}x{height2}"
         ))
     } else {
         Ok(())

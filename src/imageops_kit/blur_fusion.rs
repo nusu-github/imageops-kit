@@ -7,7 +7,7 @@
 //! Date of Conference: 19-22 September 2021\
 //! DOI: 10.1109/ICIP42928.2021.9506164\
 //! Publisher: IEEE\
-//! Conference Location: Anchorage, AK, USA  
+//! Conference Location: Anchorage, AK, USA
 //!
 //! ## Overview
 //!
@@ -31,7 +31,7 @@
 //! Where:
 //! - `I_i`: Observed color value at pixel position i
 //! - `F_i`: Foreground color
-//! - `B_i`: Background color  
+//! - `B_i`: Background color
 //! - `α_i`: Mixing level between foreground and background (0=transparent, 1=opaque)
 //!
 //! ### Blur-Fusion Cost Function

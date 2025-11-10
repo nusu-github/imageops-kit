@@ -125,7 +125,6 @@ where
         let alpha_normalized = normalize_alpha_with_max(alpha, max_value);
         let luminance = f32::from(luminance);
 
-        // Premultiply and clamp to valid range
         let premultiplied = luminance * alpha_normalized;
         let clamped = S::clamp(premultiplied);
 
@@ -149,7 +148,6 @@ where
         let Rgba([red, green, blue, alpha]) = pixel;
         let alpha_normalized = normalize_alpha_with_max(alpha, max_value);
 
-        // Convert to f32 and premultiply
         compute_premultiplied_rgb_impl([red, green, blue], alpha_normalized)
     }))
 }
@@ -397,7 +395,6 @@ where
     S: Clamp<f32> + Primitive,
     f32: From<S>,
 {
-    // Construct array directly
     let [r, g, b] = channels;
     let r = f32::from(r) * alpha_normalized;
     let g = f32::from(g) * alpha_normalized;

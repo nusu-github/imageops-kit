@@ -117,10 +117,8 @@ where
     let (x, y) = calculate_position((width, height), pad_size, position)?;
     let (target_width, target_height) = pad_size;
 
-    // Allocate buffer with fill color
     let mut out = create_buffer_impl(target_width, target_height, color);
 
-    // Copy source image to destination at specified position
     copy_image_impl(image, &mut out, x, y, width, height);
 
     Ok(out)
@@ -149,7 +147,6 @@ fn copy_image_impl<P>(
         return;
     }
 
-    // Pixel-by-pixel copy using iterators
     iproduct!(0..height, 0..width).for_each(|(src_y, src_x)| {
         let dst_x = start_x + src_x;
         let dst_y = start_y + src_y;
@@ -198,16 +195,13 @@ where
     let subpixels_per_pixel = P::CHANNEL_COUNT as usize;
     let total_subpixels = total_pixels * subpixels_per_pixel;
 
-    // Pre-allocate with exact capacity to avoid reallocations
     let mut buffer = Vec::with_capacity(total_subpixels);
 
-    // Fill buffer with color channels
     let fill_channels = fill_color.channels();
     for _ in 0..total_pixels {
         buffer.extend_from_slice(fill_channels);
     }
 
-    // Safety: We've filled exactly the required number of elements
     ImageBuffer::from_raw(width, height, buffer)
         .expect("Buffer size calculation error - this should not happen")
 }

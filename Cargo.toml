@@ -20,7 +20,6 @@ image = { version = "0.25", default-features = false }
 imageproc = { version = "0.25", default-features = false }
 itertools = "0.14.0"
 libblur = "0.20.0"
-pulp = { version = "0.21", features = ["macro"] }
 thiserror = "2.0.0"
 
 [dev-dependencies]

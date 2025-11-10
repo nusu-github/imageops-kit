@@ -168,7 +168,6 @@ where
     let (width, height) = image.dimensions();
     let channels = P::CHANNEL_COUNT as usize;
 
-    // Pad the image
     let padded = pad_image_impl(image, 2);
     let (padded_width, padded_height) = padded.dimensions();
     let padding = 2;
@@ -200,23 +199,17 @@ where
         }
     });
 
-    // Pre-compute radius and area constants
     let radius_usize = radius as usize;
 
-    // Reusable pixel data buffer
     let mut pixel_data = Vec::with_capacity(channels);
 
-    // Process each pixel using region-based filtering
     let output = ImageBuffer::from_fn(width, height, |x, y| {
-        // Coordinates in padded space
         let padded_y = (y + padding as u32) as usize;
         let padded_x = (x + padding as u32) as usize;
 
-        // Get current pixel value
         let current_pixel = image.get_pixel(x, y);
         let current_channels = current_pixel.channels();
 
-        // Pre-compute regions for this pixel
         let regions = OneSidedBoxFilterRegions::new(padded_y, padded_x, radius_usize);
 
         pixel_data.clear();
@@ -228,7 +221,6 @@ where
 
             let integral_base = &channel_integrals[channel_idx * integral_size..];
 
-            // Calculate quarter windows
             for &(y1, x1, y2, x2) in &regions.quarters {
                 let value = box_sum_impl(integral_base, integral_width, y1, x1, y2, x2)
                     / regions.quarter_area;
@@ -239,7 +231,6 @@ where
                 }
             }
 
-            // Calculate half windows
             for &(y1, x1, y2, x2) in &regions.halves {
                 let value =
                     box_sum_impl(integral_base, integral_width, y1, x1, y2, x2) / regions.half_area;
