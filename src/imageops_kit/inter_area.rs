@@ -1,6 +1,6 @@
 use image::{ImageBuffer, Pixel, Primitive};
 use imageproc::definitions::{Clamp, Image};
-use itertools::{Itertools, iproduct};
+use itertools::Itertools;
 
 use crate::error::InterAreaError;
 
@@ -189,22 +189,24 @@ where
         let end_x = start_x + scale_x;
         let end_y = start_y + scale_y;
 
-        // Use iproduct to create Cartesian product of coordinates and fold to accumulate
-        let pixel_sum = iproduct!(start_y..end_y, start_x..end_x).fold(
-            vec![0.0f32; channels],
-            |mut acc, (sy, sx)| {
-                let pixel_base_idx = ((sy * src_width + sx) * channels as u32) as usize;
+        // Hoist constant cast outside the loop
+        let channels_u32 = channels as u32;
 
-                // Accumulate each channel using iterators
+        // Initialize accumulator once, not in fold
+        let mut pixel_sum = vec![0.0f32; channels];
+
+        for sy in start_y..end_y {
+            let row_base_idx = (sy * src_width * channels_u32) as usize;
+            for sx in start_x..end_x {
+                let pixel_base_idx = row_base_idx + (sx * channels_u32) as usize;
+
                 for c in 0..channels {
-                    acc[c] += f32::from(src_buffer[pixel_base_idx + c]);
+                    pixel_sum[c] += f32::from(src_buffer[pixel_base_idx + c]);
                 }
+            }
+        }
 
-                acc
-            },
-        );
-
-        // Convert accumulated values to output pixel using iterator chains
+        // Convert accumulated values to output pixel
         let output_channels = pixel_sum
             .into_iter()
             .map(|sum| P::Subpixel::clamp(sum * inv_area))
@@ -239,6 +241,9 @@ where
     let mut output = ImageBuffer::new(dst_width, dst_height);
     let src_buffer = src.as_raw();
 
+    // Hoist constant computation outside the loop
+    let channels_u32 = channels as u32;
+
     // Process each destination row by grouping y_weights by destination index
     for (dy, y_group) in &y_weights.iter().chunk_by(|w| w.destination_index) {
         let mut row_accumulator = vec![0.0f32; dst_width as usize * channels];
@@ -248,16 +253,23 @@ where
             let sy = y_entry.source_index;
             let beta = y_entry.weight;
 
-            // Horizontal pass: accumulate weighted source pixels
-            let horizontal_result = compute_horizontal_pass(
-                &x_weights, src_buffer, sy, src_width, dst_width, channels, beta,
-            );
+            // Fused horizontal pass: accumulate directly into row_accumulator
+            // This eliminates intermediate allocation of horizontal_result
+            let row_base_idx = (sy * src_width * channels_u32) as usize;
 
-            // Add to row accumulator using iterator operations
-            iproduct!(0..dst_width, 0..channels).for_each(|(dx, c)| {
-                let idx = dx as usize * channels + c;
-                row_accumulator[idx] += horizontal_result[idx];
-            });
+            for x_entry in &x_weights {
+                let dx = x_entry.destination_index;
+                let sx = x_entry.source_index;
+                let alpha = x_entry.weight;
+
+                let src_pixel_base_idx = row_base_idx + (sx * channels_u32) as usize;
+                let dst_pixel_base_idx = dx as usize * channels;
+
+                for c in 0..channels {
+                    row_accumulator[dst_pixel_base_idx + c] +=
+                        f32::from(src_buffer[src_pixel_base_idx + c]) * alpha * beta;
+                }
+            }
         }
 
         // Write the completed row to output
@@ -265,40 +277,6 @@ where
     }
 
     Ok(output)
-}
-
-/// Compute horizontal pass for a single source row.
-fn compute_horizontal_pass<S>(
-    x_weights: &[InterpolationWeight],
-    src_buffer: &[S],
-    sy: u32,
-    src_width: u32,
-    dst_width: u32,
-    channels: usize,
-    beta: f32,
-) -> Vec<f32>
-where
-    S: Primitive,
-    f32: From<S>,
-{
-    let mut horizontal_buf = vec![0.0f32; dst_width as usize * channels];
-
-    for x_entry in x_weights {
-        let dx = x_entry.destination_index;
-        let sx = x_entry.source_index;
-        let alpha = x_entry.weight;
-
-        let src_pixel_base_idx = ((sy * src_width + sx) * channels as u32) as usize;
-        let dst_pixel_base_idx = dx as usize * channels;
-
-        // Accumulate each channel
-        for c in 0..channels {
-            horizontal_buf[dst_pixel_base_idx + c] +=
-                f32::from(src_buffer[src_pixel_base_idx + c]) * alpha * beta;
-        }
-    }
-
-    horizontal_buf
 }
 
 /// Write accumulated row data to output buffer.
@@ -314,8 +292,12 @@ fn write_output_row<P>(
 {
     let output_buffer = output.as_mut();
 
+    // Hoist invariant computations outside the loop
+    let channels_u32 = channels as u32;
+    let row_base_idx = (dy * dst_width * channels_u32) as usize;
+
     for dx in 0..dst_width {
-        let dst_pixel_base_idx = ((dy * dst_width + dx) * channels as u32) as usize;
+        let dst_pixel_base_idx = row_base_idx + (dx * channels_u32) as usize;
         let src_pixel_base_idx = dx as usize * channels;
 
         for c in 0..channels {
