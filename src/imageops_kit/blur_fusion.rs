@@ -291,10 +291,9 @@ where
     let mut foreground = image.clone();
     let background = image;
 
-    // Use standard radii for iterations
     let radii = match iterations {
         1 => vec![radius],
-        2 => vec![BLUR_FUSION_X2_RADIUS_1, BLUR_FUSION_X2_RADIUS_2], // Standard Blur-Fusion x2 radii
+        2 => vec![BLUR_FUSION_X2_RADIUS_1, BLUR_FUSION_X2_RADIUS_2],
         _ => {
             return Err(AlphaMaskError::InvalidParameter(
                 "iterations must be 1 or 2".to_owned(),
@@ -302,7 +301,7 @@ where
         }
     };
 
-    // Create workspace once to reuse buffers across iterations
+    // Workspace prevents repeated allocations when performing multiple iterations
     let (width, height) = image.dimensions();
     let mut workspace = BlurFusionWorkspace::new(width, height);
 
@@ -313,11 +312,12 @@ where
     Ok(foreground)
 }
 
-/// Applies one step of the Blur-Fusion algorithm using optimized box filtering.
+/// Applies one step of the Blur-Fusion algorithm.
 ///
-/// This function implements equations 4, 5, and 7 from the paper, performing:
-/// 1. Computation of optimized smoothed estimates (Equations 4, 5)
-/// 2. Application of final foreground estimation (Equation 7)
+/// Separates computation into two phases to allow LLVM to optimize memory access patterns
+/// and enable better instruction-level parallelism:
+/// 1. Smoothed estimates computation (Equations 4, 5) - produces intermediate buffers
+/// 2. Final foreground estimation (Equation 7) - consumes intermediate buffers
 fn apply_blur_fusion_step_impl<T>(
     image: &Image<Rgb<T>>,
     alpha: &Image<Luma<T>>,
@@ -331,11 +331,9 @@ where
     T: Clamp<f32> + Primitive,
     f32: From<T>,
 {
-    // Phase 1: Compute weighted blurred estimates using optimized approach
     let (f_hat, b_hat) =
         compute_smoothed_estimates_impl(foreground, background, alpha, radius, workspace)?;
 
-    // Phase 2: Apply final foreground estimation (Equation 7) using iterators
     let max_val = f32::from(T::DEFAULT_MAX_VALUE);
     let inv_max_val = 1.0 / max_val;
 
@@ -367,14 +365,11 @@ where
     Ok(())
 }
 
-/// Computation of smoothed estimates using direct f32 box filtering (Equations 4 and 5).
+/// Computes smoothed foreground and background estimates (Equations 4 and 5).
 ///
-/// This function efficiently implements equations 4 and 5 from the paper:
-/// - F̂_i = Σ(F_j * α_j) / Σ(α_j)
-/// - B̂_i = Σ(B_j * (1-α_j)) / Σ(1-α_j)
-///
-/// Acceleration is achieved through direct f32 calculations and optimized channel processing.
-/// The workspace parameter provides pre-allocated buffers to reduce memory allocations.
+/// Uses f32 for all intermediate calculations to prevent precision loss from integer
+/// truncation in weighted averaging. Workspace buffers are reused across iterations
+/// to minimize heap allocations in the hot path.
 fn compute_smoothed_estimates_impl<T>(
     foreground: &Image<Rgb<T>>,
     background: &Image<Rgb<T>>,
@@ -412,13 +407,11 @@ where
             let alpha_f32 = f32::from(alpha_pixel[0]);
             let beta_f32 = max_val - alpha_f32;
 
-            // Update weighted foreground and background
             for c in 0..3 {
                 fg_w_pixel[c] = f32::from(fg_pixel[c]) * alpha_f32;
                 bg_w_pixel[c] = f32::from(bg_pixel[c]) * beta_f32;
             }
 
-            // Update weighted alpha and beta
             alpha_w_pixel[0] = alpha_f32;
             beta_w_pixel[0] = beta_f32;
         },
@@ -433,7 +426,6 @@ where
     let mut alpha_blur_buffer: Vec<f32> = vec![0.0; luma_pixel_count];
     let mut beta_blur_buffer: Vec<f32> = vec![0.0; luma_pixel_count];
 
-    // Apply box filter to all weighted images using zero-copy borrow pattern
     let converted_fg_weighted = BlurImage::borrow(
         fg_weighted.as_raw(),
         fg_weighted.width(),
@@ -540,7 +532,6 @@ where
             )
         })?;
 
-    // Reconstruct final averaged images using iterators
     let mut f_hat: Image<Rgb<T>> = ImageBuffer::new(width, height);
     let mut b_hat: Image<Rgb<T>> = ImageBuffer::new(width, height);
 
@@ -581,13 +572,13 @@ where
     Ok((f_hat, b_hat))
 }
 
-/// Validates input parameters.
+/// Validates input parameters to prevent runtime errors in box filter operations.
 ///
-/// Checks the following conditions:
-/// - Image and alpha matte dimensions match
-/// - Radius is greater than 0 and odd
-/// - Image is large enough for the given radius
-/// - Iteration count is 1 or 2
+/// Requirements enforced:
+/// - Image and alpha matte dimensions match (prevents pixel misalignment)
+/// - Radius is greater than 0 and odd (libblur requirement for symmetric kernels)
+/// - Image is large enough for the given radius (prevents out-of-bounds access)
+/// - Iteration count is 1 or 2 (algorithm supports only these configurations)
 fn validate_inputs_impl<T>(
     image: &Image<Rgb<T>>,
     alpha: &Image<Luma<T>>,

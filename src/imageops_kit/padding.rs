@@ -126,7 +126,7 @@ where
 
 /// Copies source image to destination at specified offset.
 ///
-/// Uses unsafe pixel access for bounds-checked coordinates.
+/// Unsafe pixel access avoids redundant bounds checks since coordinates are validated by calculate_position.
 #[inline]
 fn copy_image_impl<P>(
     src: &Image<P>,
@@ -141,7 +141,7 @@ fn copy_image_impl<P>(
     let start_x = offset_x as u32;
     let start_y = offset_y as u32;
 
-    // Try row-wise bulk copy for contiguous memory
+    // Row-wise copy reduces per-pixel overhead for wide images aligned at x=0
     if start_x == 0 && width > 64 {
         copy_rows_bulk_impl(src, dst, start_x, start_y, width, height);
         return;
@@ -159,7 +159,7 @@ fn copy_image_impl<P>(
     });
 }
 
-/// Copies complete rows when source starts at x=0.
+/// Optimized path for full-width row copies to reduce iteration overhead.
 #[inline]
 fn copy_rows_bulk_impl<P>(
     src: &Image<P>,
@@ -171,7 +171,7 @@ fn copy_rows_bulk_impl<P>(
 ) where
     P: Pixel,
 {
-    // Pixel-by-pixel copy (ImageBuffer doesn't expose contiguous row access)
+    // ImageBuffer's API doesn't expose contiguous row slices, forcing per-pixel iteration
     iproduct!(0..height, 0..width).for_each(|(src_y, src_x)| {
         let dst_x = start_x + src_x;
         let dst_y = start_y + src_y;

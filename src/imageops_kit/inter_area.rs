@@ -74,7 +74,6 @@ fn compute_weights_for_destination_pixel(
         scale,
     );
 
-    // Create iterators for each type of weight contribution
     let left_partial = create_left_partial_weight(dx, src_x_start, src_x_start_int, cell_width);
     let full_overlaps = create_full_overlap_weights(dx, src_x_start_int, src_x_end_int, cell_width);
     let right_partial =
@@ -160,7 +159,6 @@ fn can_use_integer_scale_impl(src_size: u32, dst_size: u32) -> bool {
     let scale = src_size as f32 / dst_size as f32;
     let int_scale = scale.round() as u32;
 
-    // Check if the scale is close to an integer
     (scale - int_scale as f32).abs() < f32::EPSILON && int_scale >= 2
 }
 
@@ -206,7 +204,6 @@ where
             }
         }
 
-        // Convert accumulated values to output pixel
         let output_channels = pixel_sum
             .into_iter()
             .map(|sum| P::Subpixel::clamp(sum * inv_area))
@@ -233,7 +230,6 @@ where
     let scale_x = src_width as f32 / dst_width as f32;
     let scale_y = src_height as f32 / dst_height as f32;
 
-    // Compute X and Y tables
     let x_weights = compute_interpolation_weights_impl(src_width, dst_width, scale_x);
     let y_weights = compute_interpolation_weights_impl(src_height, dst_height, scale_y);
 
@@ -244,11 +240,9 @@ where
     // Hoist constant computation outside the loop
     let channels_u32 = channels as u32;
 
-    // Process each destination row by grouping y_weights by destination index
     for (dy, y_group) in &y_weights.iter().chunk_by(|w| w.destination_index) {
         let mut row_accumulator = vec![0.0f32; dst_width as usize * channels];
 
-        // Process each source row that contributes to this destination row
         for y_entry in y_group {
             let sy = y_entry.source_index;
             let beta = y_entry.weight;
@@ -272,7 +266,6 @@ where
             }
         }
 
-        // Write the completed row to output
         write_output_row(&mut output, dy, &row_accumulator, dst_width, channels);
     }
 
@@ -324,7 +317,6 @@ impl InterAreaResize {
             });
         }
 
-        // Handle upscaling (use bilinear interpolation)
         if self.new_width > src_width || self.new_height > src_height {
             // For upscaling, INTER_AREA behaves like INTER_LINEAR
             // For simplicity, we'll return an error for now
@@ -336,7 +328,6 @@ impl InterAreaResize {
             });
         }
 
-        // Check if we can use the integer scale optimization
         if can_use_integer_scale_impl(src_width, self.new_width)
             && can_use_integer_scale_impl(src_height, self.new_height)
         {

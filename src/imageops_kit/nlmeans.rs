@@ -98,7 +98,7 @@ pub trait NLMeansExt<T> {
     ) -> Result<&mut Self, NLMeansError>;
 }
 
-/// Validation function for Non-Local Means parameters
+/// Validates parameters to prevent runtime errors and ensure algorithm correctness
 fn validate_parameters_impl(
     h: f32,
     patch_size: u32,
@@ -148,8 +148,7 @@ fn validate_parameters_impl(
     Ok(())
 }
 
-/// Calculate squared Euclidean distance between two patches
-/// Works for both single-channel and multichannel patches
+/// Computes squared distance to avoid expensive sqrt operation in weight calculation
 #[inline]
 fn patch_distance_impl<T>(patch1: &[T], patch2: &[T]) -> f32
 where
@@ -166,7 +165,7 @@ where
         .sum()
 }
 
-/// Extract a patch from the buffered image at the given coordinates
+/// Extracts patch using fallback values for out-of-bounds pixels to handle edge cases safely
 fn extract_patch_impl<T>(
     buffered_image: &[T],
     buffer_width: u32,
@@ -189,7 +188,6 @@ where
         let x = center_x_i32 + dx as i32 - half_size_i32;
         let y = center_y_i32 + dy as i32 - half_size_i32;
 
-        // Ensure coordinates are valid
         if x >= 0 && y >= 0 && (x as u32) < buffer_width && (y as u32) < buffer_height {
             let idx = y as usize * buffer_width as usize + x as usize;
             if idx < buffered_image.len() {
@@ -198,7 +196,6 @@ where
                 patch.push(buffered_image[0]);
             }
         } else {
-            // Out of bounds, use a fallback value
             patch.push(buffered_image[0]);
         }
     });
@@ -206,7 +203,7 @@ where
     patch
 }
 
-/// Extract a RGB patch from the buffered image at the given coordinates
+/// RGB patch extraction with channel-aware indexing (3 values per pixel)
 fn extract_patch_rgb_impl<T>(
     buffered_image: &[T],
     buffer_width: u32,
@@ -229,21 +226,18 @@ where
         let x = center_x_i32 + dx as i32 - half_size_i32;
         let y = center_y_i32 + dy as i32 - half_size_i32;
 
-        // Ensure coordinates are valid
         if x >= 0 && y >= 0 && (x as u32) < buffer_width && (y as u32) < buffer_height {
             let base_idx = (y as usize * buffer_width as usize + x as usize) * 3;
             if base_idx + 2 < buffered_image.len() {
-                patch.push(buffered_image[base_idx]); // R
-                patch.push(buffered_image[base_idx + 1]); // G
-                patch.push(buffered_image[base_idx + 2]); // B
+                patch.push(buffered_image[base_idx]);
+                patch.push(buffered_image[base_idx + 1]);
+                patch.push(buffered_image[base_idx + 2]);
             } else {
-                // Out of bounds, use fallback values
                 patch.push(buffered_image[0]);
                 patch.push(buffered_image[1]);
                 patch.push(buffered_image[2]);
             }
         } else {
-            // Out of bounds, use fallback values
             patch.push(buffered_image[0]);
             patch.push(buffered_image[1]);
             patch.push(buffered_image[2]);
@@ -253,7 +247,7 @@ where
     patch
 }
 
-/// Extract a RGBA patch from the buffered image at the given coordinates
+/// RGBA patch extraction with channel-aware indexing (4 values per pixel)
 fn extract_patch_rgba_impl<T>(
     buffered_image: &[T],
     buffer_width: u32,
@@ -276,23 +270,20 @@ where
         let x = center_x_i32 + dx as i32 - half_size_i32;
         let y = center_y_i32 + dy as i32 - half_size_i32;
 
-        // Ensure coordinates are valid
         if x >= 0 && y >= 0 && (x as u32) < buffer_width && (y as u32) < buffer_height {
             let base_idx = (y as usize * buffer_width as usize + x as usize) * 4;
             if base_idx + 3 < buffered_image.len() {
-                patch.push(buffered_image[base_idx]); // R
-                patch.push(buffered_image[base_idx + 1]); // G
-                patch.push(buffered_image[base_idx + 2]); // B
-                patch.push(buffered_image[base_idx + 3]); // A
+                patch.push(buffered_image[base_idx]);
+                patch.push(buffered_image[base_idx + 1]);
+                patch.push(buffered_image[base_idx + 2]);
+                patch.push(buffered_image[base_idx + 3]);
             } else {
-                // Out of bounds, use fallback values
                 patch.push(buffered_image[0]);
                 patch.push(buffered_image[1]);
                 patch.push(buffered_image[2]);
                 patch.push(buffered_image[3]);
             }
         } else {
-            // Out of bounds, use fallback values
             patch.push(buffered_image[0]);
             patch.push(buffered_image[1]);
             patch.push(buffered_image[2]);
@@ -303,7 +294,7 @@ where
     patch
 }
 
-/// Apply padding to the image for boundary handling
+/// Adds reflection padding to prevent edge artifacts during patch comparison
 fn add_padding_impl<T>(image: &Image<Luma<T>>, pad_size: u32) -> (Vec<T>, u32, u32)
 where
     T: Primitive,
@@ -313,22 +304,17 @@ where
     let buffer_height = height + 2 * pad_size;
     let mut buffered = vec![image.get_pixel(0, 0).0[0]; (buffer_width * buffer_height) as usize];
 
-    // Copy original image to center
     iproduct!(0..height, 0..width).for_each(|(y, x)| {
         let dst_idx = ((y + pad_size) * buffer_width + (x + pad_size)) as usize;
         buffered[dst_idx] = image.get_pixel(x, y).0[0];
     });
 
-    // Apply reflection padding
-    // Top and bottom borders
     iproduct!(0..pad_size, pad_size..(buffer_width - pad_size)).for_each(|(y, x)| {
-        // Top border - reflect from bottom
         let src_y = pad_size + (pad_size - 1 - y);
         let src_idx = (src_y * buffer_width + x) as usize;
         let dst_top_idx = (y * buffer_width + x) as usize;
         buffered[dst_top_idx] = buffered[src_idx];
 
-        // Bottom border - reflect from top
         let dst_bottom_y = buffer_height - 1 - y;
         let src_y = buffer_height - pad_size - 1 - (pad_size - 1 - y);
         let src_idx = (src_y * buffer_width + x) as usize;
@@ -336,15 +322,12 @@ where
         buffered[dst_bottom_idx] = buffered[src_idx];
     });
 
-    // Left and right borders
     iproduct!(0..buffer_height, 0..pad_size).for_each(|(y, x)| {
-        // Left border - reflect from right
         let src_x = pad_size + (pad_size - 1 - x);
         let src_idx = (y * buffer_width + src_x) as usize;
         let dst_left_idx = (y * buffer_width + x) as usize;
         buffered[dst_left_idx] = buffered[src_idx];
 
-        // Right border - reflect from left
         let dst_right_x = buffer_width - 1 - x;
         let src_x = buffer_width - pad_size - 1 - (pad_size - 1 - x);
         let src_idx = (y * buffer_width + src_x) as usize;
@@ -355,7 +338,7 @@ where
     (buffered, buffer_width, buffer_height)
 }
 
-/// Apply padding to RGB image for boundary handling
+/// RGB padding with channel-aware reflection (3 values per pixel)
 fn add_padding_rgb_impl<S>(image: &Image<Rgb<S>>, pad_size: u32) -> (Vec<S>, u32, u32)
 where
     Rgb<S>: Pixel<Subpixel = S>,
@@ -367,19 +350,15 @@ where
     let mut buffered =
         vec![image.get_pixel(0, 0).0[0]; (buffer_width * buffer_height * 3) as usize];
 
-    // Copy original image to center
     iproduct!(0..height, 0..width).for_each(|(y, x)| {
         let src_pixel = image.get_pixel(x, y);
         let dst_base = ((y + pad_size) * buffer_width + (x + pad_size)) as usize * 3;
-        buffered[dst_base] = src_pixel.0[0]; // R
-        buffered[dst_base + 1] = src_pixel.0[1]; // G
-        buffered[dst_base + 2] = src_pixel.0[2]; // B
+        buffered[dst_base] = src_pixel.0[0];
+        buffered[dst_base + 1] = src_pixel.0[1];
+        buffered[dst_base + 2] = src_pixel.0[2];
     });
 
-    // Apply reflection padding
-    // Top and bottom borders
     iproduct!(0..pad_size, pad_size..(buffer_width - pad_size)).for_each(|(y, x)| {
-        // Top border - reflect from bottom
         let src_y = pad_size + (pad_size - 1 - y);
         let src_base = (src_y * buffer_width + x) as usize * 3;
         let dst_top_base = (y * buffer_width + x) as usize * 3;
@@ -387,7 +366,6 @@ where
         buffered[dst_top_base + 1] = buffered[src_base + 1];
         buffered[dst_top_base + 2] = buffered[src_base + 2];
 
-        // Bottom border - reflect from top
         let dst_bottom_y = buffer_height - 1 - y;
         let src_y = buffer_height - pad_size - 1 - (pad_size - 1 - y);
         let src_base = (src_y * buffer_width + x) as usize * 3;
@@ -397,9 +375,7 @@ where
         buffered[dst_bottom_base + 2] = buffered[src_base + 2];
     });
 
-    // Left and right borders
     iproduct!(0..buffer_height, 0..pad_size).for_each(|(y, x)| {
-        // Left border - reflect from right
         let src_x = pad_size + (pad_size - 1 - x);
         let src_base = (y * buffer_width + src_x) as usize * 3;
         let dst_left_base = (y * buffer_width + x) as usize * 3;
@@ -407,7 +383,6 @@ where
         buffered[dst_left_base + 1] = buffered[src_base + 1];
         buffered[dst_left_base + 2] = buffered[src_base + 2];
 
-        // Right border - reflect from left
         let dst_right_x = buffer_width - 1 - x;
         let src_x = buffer_width - pad_size - 1 - (pad_size - 1 - x);
         let src_base = (y * buffer_width + src_x) as usize * 3;
@@ -420,7 +395,7 @@ where
     (buffered, buffer_width, buffer_height)
 }
 
-/// Apply padding to RGBA image for boundary handling
+/// RGBA padding with channel-aware reflection (4 values per pixel)
 fn add_padding_rgba_impl<S>(image: &Image<Rgba<S>>, pad_size: u32) -> (Vec<S>, u32, u32)
 where
     Rgba<S>: Pixel<Subpixel = S>,
@@ -432,20 +407,16 @@ where
     let mut buffered =
         vec![image.get_pixel(0, 0).0[0]; (buffer_width * buffer_height * 4) as usize];
 
-    // Copy original image to center
     iproduct!(0..height, 0..width).for_each(|(y, x)| {
         let src_pixel = image.get_pixel(x, y);
         let dst_base = ((y + pad_size) * buffer_width + (x + pad_size)) as usize * 4;
-        buffered[dst_base] = src_pixel.0[0]; // R
-        buffered[dst_base + 1] = src_pixel.0[1]; // G
-        buffered[dst_base + 2] = src_pixel.0[2]; // B
-        buffered[dst_base + 3] = src_pixel.0[3]; // A
+        buffered[dst_base] = src_pixel.0[0];
+        buffered[dst_base + 1] = src_pixel.0[1];
+        buffered[dst_base + 2] = src_pixel.0[2];
+        buffered[dst_base + 3] = src_pixel.0[3];
     });
 
-    // Apply reflection padding
-    // Top and bottom borders
     iproduct!(0..pad_size, pad_size..(buffer_width - pad_size)).for_each(|(y, x)| {
-        // Top border - reflect from bottom
         let src_y = pad_size + (pad_size - 1 - y);
         let src_base = (src_y * buffer_width + x) as usize * 4;
         let dst_top_base = (y * buffer_width + x) as usize * 4;
@@ -454,7 +425,6 @@ where
         buffered[dst_top_base + 2] = buffered[src_base + 2];
         buffered[dst_top_base + 3] = buffered[src_base + 3];
 
-        // Bottom border - reflect from top
         let dst_bottom_y = buffer_height - 1 - y;
         let src_y = buffer_height - pad_size - 1 - (pad_size - 1 - y);
         let src_base = (src_y * buffer_width + x) as usize * 4;
@@ -465,9 +435,7 @@ where
         buffered[dst_bottom_base + 3] = buffered[src_base + 3];
     });
 
-    // Left and right borders
     iproduct!(0..buffer_height, 0..pad_size).for_each(|(y, x)| {
-        // Left border - reflect from right
         let src_x = pad_size + (pad_size - 1 - x);
         let src_base = (y * buffer_width + src_x) as usize * 4;
         let dst_left_base = (y * buffer_width + x) as usize * 4;
@@ -476,7 +444,6 @@ where
         buffered[dst_left_base + 2] = buffered[src_base + 2];
         buffered[dst_left_base + 3] = buffered[src_base + 3];
 
-        // Right border - reflect from left
         let dst_right_x = buffer_width - 1 - x;
         let src_x = buffer_width - pad_size - 1 - (pad_size - 1 - x);
         let src_base = (y * buffer_width + src_x) as usize * 4;
@@ -499,10 +466,8 @@ where
     fn nl_means(self, h: f32, patch_size: u32, search_window: u32) -> Result<Self, NLMeansError> {
         let (width, height) = self.dimensions();
 
-        // Validate parameters
         validate_parameters_impl(h, patch_size, search_window, width, height)?;
 
-        // Apply reflection padding
         let pad_size = search_window / 2;
         let (buffered_image, buffer_width, buffer_height) = add_padding_impl(&self, pad_size);
 
@@ -510,13 +475,11 @@ where
 
         let mut result = ImageBuffer::new(width, height);
 
-        // Process each pixel
         for y in 0..height {
             for x in 0..width {
                 let buffer_x = x + pad_size;
                 let buffer_y = y + pad_size;
 
-                // Extract patch for current pixel
                 let pixel_patch = extract_patch_impl(
                     &buffered_image,
                     buffer_width,
@@ -529,14 +492,12 @@ where
                 let mut weighted_sum = 0.0f32;
                 let mut weight_sum = 0.0f32;
 
-                // Search within search_window
                 let search_radius = search_window / 2;
                 iproduct!(
                     (buffer_y - search_radius)..=(buffer_y + search_radius),
                     (buffer_x - search_radius)..=(buffer_x + search_radius)
                 )
                 .for_each(|(ny, nx)| {
-                    // Extract patch for neighbor pixel
                     let neighbor_patch = extract_patch_impl(
                         &buffered_image,
                         buffer_width,
@@ -546,13 +507,10 @@ where
                         patch_size,
                     );
 
-                    // Calculate patch distance
                     let distance = patch_distance_impl(&pixel_patch, &neighbor_patch);
 
-                    // Calculate weight
                     let weight = f32::exp(-distance / normalization_factor);
 
-                    // Get neighbor pixel value
                     let neighbor_value =
                         f32::from(buffered_image[(ny * buffer_width + nx) as usize]);
 
@@ -560,14 +518,12 @@ where
                     weight_sum += weight;
                 });
 
-                // Calculate new pixel value
                 let new_value = if weight_sum > 0.0 {
                     weighted_sum / weight_sum
                 } else {
                     f32::from(self.get_pixel(x, y).0[0])
                 };
 
-                // Clamp to valid range and convert back to T
                 let clamped_value = T::clamp(new_value);
                 result.put_pixel(x, y, Luma([clamped_value]));
             }
@@ -601,10 +557,8 @@ where
     fn nl_means(self, h: f32, patch_size: u32, search_window: u32) -> Result<Self, NLMeansError> {
         let (width, height) = self.dimensions();
 
-        // Validate parameters
         validate_parameters_impl(h, patch_size, search_window, width, height)?;
 
-        // Apply reflection padding
         let pad_size = search_window / 2;
         let (buffered_image, buffer_width, buffer_height) = add_padding_rgb_impl(&self, pad_size);
 
@@ -612,13 +566,11 @@ where
 
         let mut result = ImageBuffer::new(width, height);
 
-        // Process each pixel
         for y in 0..height {
             for x in 0..width {
                 let buffer_x = x + pad_size;
                 let buffer_y = y + pad_size;
 
-                // Extract patch for current pixel
                 let pixel_patch = extract_patch_rgb_impl(
                     &buffered_image,
                     buffer_width,
@@ -631,14 +583,12 @@ where
                 let mut weighted_sum = [0.0f32; 3];
                 let mut weight_sum = 0.0f32;
 
-                // Search within search_window
                 let search_radius = search_window / 2;
                 iproduct!(
                     (buffer_y - search_radius)..=(buffer_y + search_radius),
                     (buffer_x - search_radius)..=(buffer_x + search_radius)
                 )
                 .for_each(|(ny, nx)| {
-                    // Extract patch for neighbor pixel
                     let neighbor_patch = extract_patch_rgb_impl(
                         &buffered_image,
                         buffer_width,
@@ -648,13 +598,10 @@ where
                         patch_size,
                     );
 
-                    // Calculate patch distance
                     let distance = patch_distance_impl(&pixel_patch, &neighbor_patch);
 
-                    // Calculate weight
                     let weight = f32::exp(-distance / normalization_factor);
 
-                    // Get neighbor pixel values (RGB)
                     let neighbor_base = (ny * buffer_width + nx) as usize * 3;
                     let neighbor_r = f32::from(buffered_image[neighbor_base]);
                     let neighbor_g = f32::from(buffered_image[neighbor_base + 1]);
@@ -666,7 +613,6 @@ where
                     weight_sum += weight;
                 });
 
-                // Calculate new pixel values
                 let new_values = if weight_sum > 0.0 {
                     [
                         weighted_sum[0] / weight_sum,
@@ -682,7 +628,6 @@ where
                     ]
                 };
 
-                // Clamp to valid range and convert back to T
                 let clamped_r = T::clamp(new_values[0]);
                 let clamped_g = T::clamp(new_values[1]);
                 let clamped_b = T::clamp(new_values[2]);
@@ -718,10 +663,8 @@ where
     fn nl_means(self, h: f32, patch_size: u32, search_window: u32) -> Result<Self, NLMeansError> {
         let (width, height) = self.dimensions();
 
-        // Validate parameters
         validate_parameters_impl(h, patch_size, search_window, width, height)?;
 
-        // Apply reflection padding
         let pad_size = search_window / 2;
         let (buffered_image, buffer_width, buffer_height) = add_padding_rgba_impl(&self, pad_size);
 
@@ -729,13 +672,11 @@ where
 
         let mut result = ImageBuffer::new(width, height);
 
-        // Process each pixel
         for y in 0..height {
             for x in 0..width {
                 let buffer_x = x + pad_size;
                 let buffer_y = y + pad_size;
 
-                // Extract patch for current pixel
                 let pixel_patch = extract_patch_rgba_impl(
                     &buffered_image,
                     buffer_width,
@@ -748,14 +689,12 @@ where
                 let mut weighted_sum = [0.0f32; 4];
                 let mut weight_sum = 0.0f32;
 
-                // Search within search_window
                 let search_radius = search_window / 2;
                 iproduct!(
                     (buffer_y - search_radius)..=(buffer_y + search_radius),
                     (buffer_x - search_radius)..=(buffer_x + search_radius)
                 )
                 .for_each(|(ny, nx)| {
-                    // Extract patch for neighbor pixel
                     let neighbor_patch = extract_patch_rgba_impl(
                         &buffered_image,
                         buffer_width,
@@ -765,13 +704,10 @@ where
                         patch_size,
                     );
 
-                    // Calculate patch distance
                     let distance = patch_distance_impl(&pixel_patch, &neighbor_patch);
 
-                    // Calculate weight
                     let weight = f32::exp(-distance / normalization_factor);
 
-                    // Get neighbor pixel values (RGBA)
                     let neighbor_base = (ny * buffer_width + nx) as usize * 4;
                     let neighbor_r = f32::from(buffered_image[neighbor_base]);
                     let neighbor_g = f32::from(buffered_image[neighbor_base + 1]);
@@ -785,7 +721,6 @@ where
                     weight_sum += weight;
                 });
 
-                // Calculate new pixel values
                 let new_values = if weight_sum > 0.0 {
                     [
                         weighted_sum[0] / weight_sum,
@@ -803,7 +738,6 @@ where
                     ]
                 };
 
-                // Clamp to valid range and convert back to T
                 let clamped_r = T::clamp(new_values[0]);
                 let clamped_g = T::clamp(new_values[1]);
                 let clamped_b = T::clamp(new_values[2]);

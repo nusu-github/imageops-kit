@@ -190,7 +190,7 @@ where
     }
 }
 
-/// Function to validate dimensions
+/// Ensures image and mask dimensions match to prevent pixel misalignment during processing
 #[inline]
 fn validate_dimensions_impl<I1, I2, P1, P2, S>(image: &I1, mask: &I2) -> Result<(), AlphaMaskError>
 where

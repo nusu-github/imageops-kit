@@ -42,7 +42,7 @@ impl OneSidedBoxFilter {
     }
 }
 
-/// Pads image with edge replication.
+/// Edge replication prevents artifacts at image boundaries during filtering
 fn pad_image_impl<P>(image: &Image<P>, padding: u32) -> Image<P>
 where
     P: Pixel,
@@ -52,7 +52,6 @@ where
     let new_width = width + 2 * padding;
     let new_height = height + 2 * padding;
 
-    // Use from_fn with clamping for boundary handling
     ImageBuffer::from_fn(new_width, new_height, |x, y| {
         let orig_x = x.saturating_sub(padding).min(width - 1);
         let orig_y = y.saturating_sub(padding).min(height - 1);
@@ -60,7 +59,7 @@ where
     })
 }
 
-/// Calculates box sum using integral image.
+/// Computes box sum in O(1) time using integral image for fast region averaging
 #[inline]
 fn box_sum_impl(
     integral: &[f32],
@@ -153,13 +152,11 @@ where
     let (padded_width, padded_height) = padded.dimensions();
     let padding = 2;
 
-    // Create integral images for each channel using optimized 1D layout
     let integral_width = (padded_width + 1) as usize;
     let integral_height = (padded_height + 1) as usize;
     let integral_size = integral_width * integral_height;
     let mut channel_integrals = vec![0.0f32; channels * integral_size];
 
-    // Build integral images using coordinate pairs for better cache efficiency
     iproduct!(0..padded_height, 0..padded_width).for_each(|(y, x)| {
         let pixel = padded.get_pixel(x, y);
         let pixel_channels = pixel.channels();
@@ -182,13 +179,13 @@ where
 
     let radius_usize = radius as usize;
 
-    // Compute area reciprocals once before the pixel loop
+    // Reciprocals computed once to avoid repeated division in per-pixel loop
     let quarter_area = ((radius_usize + 1) * (radius_usize + 1)) as f32;
     let half_area = ((radius_usize + 1) * (2 * radius_usize + 1)) as f32;
     let quarter_area_recip = 1.0 / quarter_area;
     let half_area_recip = 1.0 / half_area;
 
-    // Precompute region structure (offsets are constant for all pixels)
+    // Region offsets are constant for all pixels, precomputed to avoid recalculation
     let region_offsets = RegionOffsets::new(radius_usize as isize);
 
     let output = ImageBuffer::from_fn(width, height, |x, y| {
@@ -198,10 +195,9 @@ where
         let current_pixel = image.get_pixel(x, y);
         let current_channels = current_pixel.channels();
 
-        // Apply offsets to get absolute coordinates for this pixel
         let regions = region_offsets.apply(padded_y, padded_x);
 
-        // Use stack-allocated array for pixel data (supports up to 4 channels: RGBA)
+        // Stack allocation avoids heap overhead for common pixel types (up to RGBA)
         let mut pixel_data = [P::Subpixel::DEFAULT_MIN_VALUE; 4];
 
         for (channel_idx, integral_base) in channel_integrals
@@ -263,7 +259,6 @@ where
             return Err(OSBFilterError::InvalidIterations { iterations });
         }
 
-        // Check if image is large enough for the filter radius
         let min_dimension = width.min(height);
         if min_dimension < 2 * self.radius + 1 {
             return Err(OSBFilterError::ImageTooSmall {
@@ -275,7 +270,6 @@ where
 
         let mut result = image.clone();
 
-        // Apply filter iterations
         for _ in 0..iterations {
             result = one_sided_box_filter_impl(&result, self.radius)?;
         }

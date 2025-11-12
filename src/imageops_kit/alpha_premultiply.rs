@@ -240,7 +240,7 @@ impl PremultiplyAlphaAndKeepExt for Image<LumaA<f32>> {
     fn premultiply_alpha_and_keep(self) -> Result<Self, ColorConversionError> {
         validate_image_dimensions(&self)?;
 
-        // Loop invariant hoisted to compile-time constant
+        // Constant prevents repeated runtime computation of max value in per-pixel loop
         const MAX_VALUE: f32 = 1.0;
 
         Ok(map_colors(&self, |pixel| {
@@ -248,7 +248,6 @@ impl PremultiplyAlphaAndKeepExt for Image<LumaA<f32>> {
             let alpha_normalized = normalize_alpha_with_max(alpha, MAX_VALUE);
             let luminance: f32 = luminance;
 
-            // Premultiply and clamp to valid range
             let premultiplied: f32 = luminance * alpha_normalized;
             let clamped = premultiplied.clamp(0.0, MAX_VALUE);
 
@@ -259,7 +258,6 @@ impl PremultiplyAlphaAndKeepExt for Image<LumaA<f32>> {
     fn premultiply_alpha_and_keep_mut(&mut self) -> Result<&mut Self, ColorConversionError> {
         validate_image_dimensions(self)?;
 
-        // Loop invariant hoisted to compile-time constant
         const MAX_VALUE: f32 = 1.0;
 
         self.pixels_mut().for_each(|pixel| {
@@ -298,14 +296,12 @@ impl PremultiplyAlphaAndKeepExt for Image<Rgba<f32>> {
     fn premultiply_alpha_and_keep(self) -> Result<Self, ColorConversionError> {
         validate_image_dimensions(&self)?;
 
-        // Loop invariant hoisted to compile-time constant
         const MAX_VALUE: f32 = 1.0;
 
         Ok(map_colors(&self, |pixel| {
             let Rgba([red, green, blue, alpha]) = pixel;
             let alpha_normalized = normalize_alpha_with_max(alpha, MAX_VALUE);
 
-            // Premultiply each channel
             let premultiplied =
                 compute_premultiplied_rgb_impl([red, green, blue], alpha_normalized);
             let Rgb([r_pre, g_pre, b_pre]) = premultiplied;
@@ -317,7 +313,6 @@ impl PremultiplyAlphaAndKeepExt for Image<Rgba<f32>> {
     fn premultiply_alpha_and_keep_mut(&mut self) -> Result<&mut Self, ColorConversionError> {
         validate_image_dimensions(self)?;
 
-        // Loop invariant hoisted to compile-time constant
         const MAX_VALUE: f32 = 1.0;
 
         self.pixels_mut().for_each(|pixel| {
@@ -357,15 +352,15 @@ impl PremultiplyAlphaAndKeepExt for Image<Rgba<u8>> {
 
 /// Compile-time Look-Up Table generator for u8 alpha premultiplication.
 ///
-/// Uses integer approximation of division: ((x * a + 2^(N-1)) * (2^N + 1)) >> (2N)
-/// For N=8: ((x * a + 128) * 257) >> 16 approximates (x * a) / 255
+/// Integer approximation avoids expensive division in per-pixel loops.
+/// Formula: ((x * a + 2^(N-1)) * (2^N + 1)) >> (2N) approximates (x * a) / (2^N - 1)
+/// For N=8: ((x * a + 128) * 257) >> 16 approximates (x * a) / 255 with rounding
 const fn generate_alpha_lut() -> [[u8; 256]; 256] {
     let mut lut = [[0u8; 256]; 256];
     let mut alpha = 0;
     while alpha < 256 {
         let mut color = 0;
         while color < 256 {
-            // Integer approximation: ((n + 128) * 257) >> 16 approximates n / 255
             let n = color * alpha;
             lut[alpha][color] = (((n + 128) * 257) >> 16) as u8;
             color += 1;
@@ -375,16 +370,16 @@ const fn generate_alpha_lut() -> [[u8; 256]; 256] {
     lut
 }
 
-/// Compile-time generated Look-Up Table for u8 alpha premultiplication
+/// Precomputed LUT eliminates division from hot path for u8 images
 static ALPHA_LUT: [[u8; 256]; 256] = generate_alpha_lut();
 
-/// u8 alpha premultiplication using compile-time LUT
+/// u8 alpha premultiplication using LUT for O(1) lookup instead of division
 #[inline]
 const fn premultiply_u8(color: u8, alpha: u8) -> u8 {
     ALPHA_LUT[alpha as usize][color as usize]
 }
 
-/// u8 RGB premultiplication using compile-time LUT
+/// u8 RGB premultiplication by applying LUT to each channel independently
 #[inline]
 const fn premultiply_rgb_u8(channels: [u8; 3], alpha: u8) -> [u8; 3] {
     [
@@ -409,10 +404,11 @@ where
     Rgb([S::clamp(r), S::clamp(g), S::clamp(b)])
 }
 
-/// Integer premultiplication for u16 type.
+/// Integer premultiplication for u16 using approximation to avoid division.
 ///
-/// Uses integer approximation of division: ((x * a + 2^(N-1)) * (2^N + 1)) >> (2N)
-/// For N=16: ((x * a + 32768) * 65537) >> 32 approximates (x * a) / 65535
+/// Integer shifts are faster than division on most architectures.
+/// Formula: ((x * a + 2^(N-1)) * (2^N + 1)) >> (2N) approximates (x * a) / (2^N - 1)
+/// For N=16: ((x * a + 32768) * 65537) >> 32 approximates (x * a) / 65535 with rounding
 #[inline]
 const fn premultiply_u16(color: u16, alpha: u16) -> u16 {
     let n = color as u32 * alpha as u32;
@@ -420,16 +416,14 @@ const fn premultiply_u16(color: u16, alpha: u16) -> u16 {
     result as u16
 }
 
-/// Integer premultiplication for u32 type using 64-bit division.
+/// Integer premultiplication for u32 using division instead of approximation.
 ///
-/// Uses division instead of integer approximation for accuracy.
-/// Integer approximation formulas for u32 either require u128 arithmetic
-/// or sacrifice precision. Since u32 images are less common and accuracy
-/// is paramount for image processing, we use division here.
+/// Integer approximation would require u128 or lose precision for u32.
+/// Division is acceptable here because u32 images are rare and precision
+/// is critical for image quality.
 #[inline]
 const fn premultiply_u32(color: u32, alpha: u32) -> u32 {
     let product = color as u64 * alpha as u64;
-    // Use division with rounding for maximum accuracy
     let rounded = product + (u32::MAX as u64 >> 1);
     (rounded / u32::MAX as u64) as u32
 }

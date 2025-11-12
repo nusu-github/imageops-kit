@@ -122,12 +122,10 @@ where
         let (width, height) = self.dimensions();
         let mut bounds = [width, height, 0, 0]; // [x1, y1, x2, y2]
 
-        // Directly iterate over pixels without creating intermediate difference image
         for (x, y, pixel) in self.enumerate_pixels() {
             let pixel_luma = pixel.to_luma_alpha().to_luma();
             let pixel: f32 = f32::from(pixel_luma[0]);
 
-            // Calculate difference and check against threshold
             let normalized_pixel = pixel / max;
             let normalized_background = background / max;
             let intensity_difference = (normalized_pixel - normalized_background).abs() * max;
@@ -146,7 +144,7 @@ where
     }
 }
 
-/// Generic `merge_alpha` function
+/// Premultiplies alpha to get effective luminance for accurate boundary detection
 fn merge_alpha_impl<S>(pixel: LumaA<S>) -> Luma<S>
 where
     S: Clamp<f32> + Primitive,
