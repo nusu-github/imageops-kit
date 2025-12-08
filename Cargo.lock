@@ -424,14 +424,15 @@ dependencies = [
 
 [[package]]
 name = "libblur"
-version = "0.20.0"
+version = "0.21.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "29724ac11826e973a38e81a75e0cd43d2d828b10687fe8f75e21930fb1cde17b"
+checksum = "683d04abd65a3b648c0786df24a4d2eb18fcaa10ccabc568054e2990b17b388b"
 dependencies = [
  "novtb",
  "num-complex",
  "num-traits",
  "rayon",
+ "zaft",
 ]
 
 [[package]]
@@ -1209,6 +1210,18 @@ name = "wit-bindgen"
 version = "0.46.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f17a85883d4e6d00e8a97c586de764dabcc06133f7f1d55dce5cdc070ad7fe59"
+
+[[package]]
+name = "zaft"
+version = "0.2.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3ea100d166c21d1b77454e52b0f59174360d00fcde281bfa1a7f06e46d6a25f4"
+dependencies = [
+ "num-complex",
+ "num-integer",
+ "num-traits",
+ "pxfm",
+]
 
 [[package]]
 name = "zerocopy"
