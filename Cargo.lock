@@ -424,9 +424,9 @@ dependencies = [
 
 [[package]]
 name = "libblur"
-version = "0.20.0"
+version = "0.24.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "29724ac11826e973a38e81a75e0cd43d2d828b10687fe8f75e21930fb1cde17b"
+checksum = "be36d686c7565229e89a80815bc7e96a94de55e9764cca2d97e95bae37037c61"
 dependencies = [
  "novtb",
  "num-complex",
@@ -505,9 +505,9 @@ dependencies = [
 
 [[package]]
 name = "novtb"
-version = "0.1.6"
+version = "0.1.13"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3a5e22f6d5d4b45845b16bb9549538c257e5b2167c3bb1401874f92154d3e971"
+checksum = "75c0ea7569466bbce2394c0e5654b1e283c28ef7c70799e6f07b32029cca6d74"
 dependencies = [
  "core_affinity",
 ]
