@@ -18,7 +18,7 @@ default = []
 [dependencies]
 image = { version = "0.25", default-features = false }
 imageproc = { version = "0.25", default-features = false }
-itertools = "0.14.0"
+itertools = "0.15.0"
 libblur = "0.20.0"
 thiserror = "2.0.0"
 
